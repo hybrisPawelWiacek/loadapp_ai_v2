@@ -144,21 +144,64 @@ if page == "New Route":
         st.subheader("Cost Breakdown")
         
         costs = st.session_state.current_costs
-        col1, col2, col3, col4 = st.columns(4)
+        breakdown = costs['breakdown']
         
+        # Calculate aggregated costs
+        base_cost = sum(breakdown['fixed_costs'].values())
+        distance_cost = sum(
+            cost for category in ['empty_driving', 'main_route'] 
+            for cost_type, cost in breakdown[category].items() 
+            if cost_type in ['fuel', 'toll', 'maintenance']
+        )
+        time_cost = sum(
+            cost for category in ['empty_driving', 'main_route'] 
+            for cost_type, cost in breakdown[category].items() 
+            if cost_type == 'driver'
+        )
+        
+        # Display main cost components
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Base Cost", f"€{costs['breakdown']['base_cost']:.2f}")
+            st.metric("Base Cost", f"€{base_cost:.2f}")
         with col2:
-            st.metric("Distance Cost", f"€{costs['breakdown']['distance_cost']:.2f}")
+            st.metric("Distance Cost", f"€{distance_cost:.2f}")
         with col3:
-            st.metric("Time Cost", f"€{costs['breakdown']['time_cost']:.2f}")
+            st.metric("Time Cost", f"€{time_cost:.2f}")
         with col4:
             st.metric("Total Cost", f"€{costs['total_cost']:.2f}")
         
         # Show detailed breakdown in expander
         with st.expander("Detailed Cost Breakdown"):
-            for cost_type, amount in costs['breakdown'].items():
-                st.metric(f"{cost_type.replace('_', ' ').title()}", f"€{amount:.2f}")
+            # Empty driving costs
+            st.subheader("Empty Driving Costs")
+            col1, col2, col3, col4 = st.columns(4)
+            for i, (cost_type, amount) in enumerate(breakdown['empty_driving'].items()):
+                with eval(f"col{(i % 4) + 1}"):
+                    st.metric(f"{cost_type.replace('_', ' ').title()}", f"€{amount:.2f}")
+            
+            # Main route costs
+            st.subheader("Main Route Costs")
+            col1, col2, col3, col4 = st.columns(4)
+            for i, (cost_type, amount) in enumerate(
+                (item for item in breakdown['main_route'].items() if not isinstance(item[1], dict))
+            ):
+                with eval(f"col{(i % 4) + 1}"):
+                    st.metric(f"{cost_type.replace('_', ' ').title()}", f"€{amount:.2f}")
+            
+            # Country-specific costs if present
+            if 'country_specific' in breakdown['main_route']:
+                st.subheader("Country-Specific Costs")
+                col1, col2, col3, col4 = st.columns(4)
+                for i, (country, amount) in enumerate(breakdown['main_route']['country_specific'].items()):
+                    with eval(f"col{(i % 4) + 1}"):
+                        st.metric(f"{country}", f"€{amount:.2f}")
+            
+            # Fixed costs
+            st.subheader("Fixed Costs")
+            col1, col2, col3, col4 = st.columns(4)
+            for i, (cost_type, amount) in enumerate(breakdown['fixed_costs'].items()):
+                with eval(f"col{(i % 4) + 1}"):
+                    st.metric(f"{cost_type.replace('_', ' ').title()}", f"€{amount:.2f}")
         
         # Add margin input and generate offer button
         st.markdown("### Generate Offer")

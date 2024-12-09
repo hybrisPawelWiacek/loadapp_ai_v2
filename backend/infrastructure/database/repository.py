@@ -9,10 +9,17 @@ from backend.domain.entities import (
 )
 from uuid import UUID
 from backend.infrastructure.monitoring.performance_metrics import measure_db_query_time
+import structlog
+from sqlalchemy.exc import SQLAlchemyError
+from functools import lru_cache
+from threading import Lock
 
 class Repository:
     def __init__(self, db: Session):
         self.db = db
+        self.logger = structlog.get_logger(__name__)
+        self._cost_settings_cache: Dict[str, CostSetting] = {}
+        self._cache_lock = Lock()
 
     # Route methods
     @measure_db_query_time(query_type="create", table="routes")
@@ -172,6 +179,167 @@ class Repository:
         for setting in cost_settings:
             self.db.refresh(setting)
         return cost_settings
+
+    @measure_db_query_time(query_type="update", table="cost_settings")
+    def bulk_update_cost_settings(self, settings: List[CostSetting]) -> bool:
+        """
+        Update multiple cost settings in a single transaction.
+        
+        Args:
+            settings: List of CostSetting objects to update
+            
+        Returns:
+            bool: True if update was successful, False otherwise
+            
+        Raises:
+            SQLAlchemyError: If database operation fails
+        """
+        try:
+            self.logger.info("starting_bulk_update", count=len(settings))
+            
+            # Start transaction
+            for setting in settings:
+                self.db.merge(setting)
+            
+            self.db.commit()
+            
+            # Invalidate cache after successful update
+            with self._cache_lock:
+                self._cost_settings_cache.clear()
+            
+            self.logger.info("bulk_update_completed", count=len(settings))
+            return True
+            
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            self.logger.error("bulk_update_failed", error=str(e))
+            raise
+    
+    @measure_db_query_time(query_type="read", table="cost_settings")
+    def cache_cost_settings(self) -> Dict[str, CostSetting]:
+        """
+        Load and cache all cost settings for quick access.
+        Uses thread-safe implementation with locks.
+        
+        Returns:
+            Dict[str, CostSetting]: Dictionary of name-indexed cost settings
+            
+        Raises:
+            SQLAlchemyError: If database operation fails
+        """
+        try:
+            with self._cache_lock:
+                # Check if cache is already populated
+                if self._cost_settings_cache:
+                    self.logger.info("returning_cached_settings", 
+                                   count=len(self._cost_settings_cache))
+                    return self._cost_settings_cache
+                
+                # Load settings from database
+                settings = self.db.query(CostSetting).filter(
+                    CostSetting.is_enabled == True
+                ).all()
+                
+                # Update cache
+                self._cost_settings_cache = {
+                    setting.name: setting for setting in settings
+                }
+                
+                self.logger.info("cost_settings_cached", 
+                               count=len(self._cost_settings_cache))
+                return self._cost_settings_cache
+                
+        except SQLAlchemyError as e:
+            self.logger.error("cache_update_failed", error=str(e))
+            raise
+    
+    @measure_db_query_time(query_type="update", table="routes")
+    def atomic_update_cost_calculations(self, route_id: str, 
+                                      cost_updates: Dict) -> bool:
+        """
+        Atomically update cost calculations for a route.
+        Uses database transaction to ensure consistency.
+        
+        Args:
+            route_id: ID of the route to update
+            cost_updates: Dictionary containing cost updates
+            
+        Returns:
+            bool: True if update was successful
+            
+        Raises:
+            SQLAlchemyError: If database operation fails
+        """
+        try:
+            self.logger.info("starting_atomic_update", 
+                           route_id=route_id)
+            
+            # Start transaction
+            route = self.db.query(RouteModel).filter(
+                RouteModel.id == route_id
+            ).with_for_update().first()
+            
+            if not route:
+                self.logger.error("route_not_found", route_id=route_id)
+                raise ValueError(f"Route not found: {route_id}")
+            
+            # Update route costs
+            route.total_cost = cost_updates.get('total_cost')
+            route.cost_breakdown = cost_updates.get('breakdown')
+            route.last_cost_update = datetime.utcnow()
+            
+            # If there are related offers, update their costs too
+            for offer in route.offers:
+                offer.total_cost = cost_updates.get('total_cost')
+                offer.cost_breakdown = cost_updates.get('breakdown')
+                offer.last_updated = datetime.utcnow()
+            
+            self.db.commit()
+            self.logger.info("atomic_update_completed", 
+                           route_id=route_id)
+            return True
+            
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            self.logger.error("atomic_update_failed", 
+                            route_id=route_id, 
+                            error=str(e))
+            raise
+    
+    def get_route_by_id(self, route_id: str) -> Optional[RouteModel]:
+        """Get a route by its ID."""
+        try:
+            route = self.db.query(RouteModel).filter(
+                RouteModel.id == route_id
+            ).first()
+            
+            if route:
+                self.logger.info("route_retrieved", route_id=route_id)
+            else:
+                self.logger.warning("route_not_found", route_id=route_id)
+                
+            return route
+            
+        except SQLAlchemyError as e:
+            self.logger.error("route_retrieval_failed", 
+                            route_id=route_id, 
+                            error=str(e))
+            raise
+    
+    def get_enabled_cost_settings(self) -> List[CostSetting]:
+        """Get all enabled cost settings."""
+        try:
+            settings = self.db.query(CostSetting).filter(
+                CostSetting.is_enabled == True
+            ).all()
+            
+            self.logger.info("enabled_settings_retrieved", 
+                           count=len(settings))
+            return settings
+            
+        except SQLAlchemyError as e:
+            self.logger.error("settings_retrieval_failed", error=str(e))
+            raise
 
     def _to_domain_route(self, db_route: RouteModel) -> Route:
         """Convert database model to domain entity."""

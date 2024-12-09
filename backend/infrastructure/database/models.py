@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, JSON, UUID, Index
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -49,18 +49,23 @@ class Offer(Base):
     route = relationship("Route", back_populates="offers")
 
 class CostSetting(Base):
-    __tablename__ = "cost_settings"
+    """Model for storing cost calculation settings."""
+    __tablename__ = 'cost_settings'
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    type = Column(String, nullable=False)
-    category = Column(String, nullable=False)
-    base_value = Column(Float, nullable=False)
-    multiplier = Column(Float, default=1.0)
-    currency = Column(String, default="EUR")
-    is_enabled = Column(Boolean, default=True)
-    description = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), nullable=False, unique=True)
+    type = Column(String(50), nullable=False)
+    category = Column(String(50), nullable=False)
+    value = Column(Float, nullable=False)
+    multiplier = Column(Float, nullable=False, default=1.0)
+    currency = Column(String(3), nullable=False)
+    is_enabled = Column(Boolean, nullable=False, default=True)
+    description = Column(String(500))
+    last_updated = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('ix_cost_settings_name', 'name'),
+    )
 
 class MetricLog(Base):
     __tablename__ = "metric_logs"
