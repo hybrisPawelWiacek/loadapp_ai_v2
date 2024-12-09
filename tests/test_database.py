@@ -2,7 +2,7 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import inspect, text
 from backend.infrastructure.database.db_setup import get_db, engine, Base
-from backend.infrastructure.database.models import Route, Offer, CostSetting
+from backend.infrastructure.database.models import Route, Offer, CostItem
 from backend.infrastructure.database.repository import Repository
 
 @pytest.fixture(scope="function")
@@ -26,7 +26,7 @@ def test_database_tables_exist(db_session):
     
     # Check required tables exist
     required_tables = [
-        'routes', 'offers', 'cost_settings', 
+        'routes', 'offers', 'cost_items', 
         'metric_logs', 'metric_aggregates', 
         'alert_rules', 'alert_events'
     ]
@@ -52,13 +52,13 @@ def test_database_tables_exist(db_session):
     }
     assert required_offer_columns.issubset(offer_columns), "Missing required columns in offers table"
     
-    # Check cost_settings table columns
-    cost_columns = {col['name'] for col in inspector.get_columns('cost_settings')}
+    # Check cost_items table columns
+    cost_columns = {col['name'] for col in inspector.get_columns('cost_items')}
     required_cost_columns = {
         'id', 'type', 'category', 'base_value', 'multiplier', 'currency',
         'is_enabled', 'description', 'created_at', 'updated_at'
     }
-    assert required_cost_columns.issubset(cost_columns), "Missing required columns in cost_settings table"
+    assert required_cost_columns.issubset(cost_columns), "Missing required columns in cost_items table"
 
     # Check metric_logs table columns
     metric_log_columns = {col['name'] for col in inspector.get_columns('metric_logs')}
@@ -186,7 +186,7 @@ def test_cost_settings_operations(db_session):
     """Test cost settings operations with different categories"""
     # Create various cost settings
     settings = [
-        CostSetting(
+        CostItem(
             type="fuel",
             category="variable",
             base_value=1.5,  # EUR per liter
@@ -194,7 +194,7 @@ def test_cost_settings_operations(db_session):
             currency="EUR",
             description="Standard fuel rate per liter"
         ),
-        CostSetting(
+        CostItem(
             type="driver_base",
             category="fixed",
             base_value=25.0,  # EUR per hour
@@ -202,7 +202,7 @@ def test_cost_settings_operations(db_session):
             currency="EUR",
             description="Base driver rate per hour"
         ),
-        CostSetting(
+        CostItem(
             type="driver_overtime",
             category="fixed",
             base_value=25.0,  # EUR per hour
@@ -210,7 +210,7 @@ def test_cost_settings_operations(db_session):
             currency="EUR",
             description="Overtime driver rate per hour"
         ),
-        CostSetting(
+        CostItem(
             type="toll",
             category="variable",
             base_value=0.2,  # EUR per km
@@ -226,29 +226,29 @@ def test_cost_settings_operations(db_session):
     db_session.commit()
     
     # Verify all settings were created
-    db_settings = db_session.query(CostSetting).all()
+    db_settings = db_session.query(CostItem).all()
     assert len(db_settings) == 4
     
     # Test filtering by category
-    variable_costs = db_session.query(CostSetting).filter(
-        CostSetting.category == "variable"
+    variable_costs = db_session.query(CostItem).filter(
+        CostItem.category == "variable"
     ).all()
     assert len(variable_costs) == 2  # fuel and toll
     
-    fixed_costs = db_session.query(CostSetting).filter(
-        CostSetting.category == "fixed"
+    fixed_costs = db_session.query(CostItem).filter(
+        CostItem.category == "fixed"
     ).all()
     assert len(fixed_costs) == 2  # driver base and overtime
     
     # Test updating a setting
-    fuel_setting = db_session.query(CostSetting).filter(
-        CostSetting.type == "fuel"
+    fuel_setting = db_session.query(CostItem).filter(
+        CostItem.type == "fuel"
     ).first()
     fuel_setting.base_value = 1.8  # Increase fuel rate
     db_session.commit()
     
-    updated_fuel = db_session.query(CostSetting).filter(
-        CostSetting.type == "fuel"
+    updated_fuel = db_session.query(CostItem).filter(
+        CostItem.type == "fuel"
     ).first()
     assert updated_fuel.base_value == 1.8
 
@@ -316,7 +316,7 @@ def test_create_offer(db_session):
 def test_create_cost_setting(db_session):
     # Create cost settings for different cost types
     cost_settings = [
-        CostSetting(
+        CostItem(
             type="fuel",
             category="variable",
             base_value=1.5,  # EUR per liter
@@ -324,7 +324,7 @@ def test_create_cost_setting(db_session):
             currency="EUR",
             description="Standard fuel rate per liter"
         ),
-        CostSetting(
+        CostItem(
             type="driver",
             category="fixed",
             base_value=25.0,  # EUR per hour
@@ -332,7 +332,7 @@ def test_create_cost_setting(db_session):
             currency="EUR",
             description="Driver hourly rate"
         ),
-        CostSetting(
+        CostItem(
             type="maintenance",
             category="variable",
             base_value=0.15,  # EUR per km
@@ -347,11 +347,11 @@ def test_create_cost_setting(db_session):
     db_session.commit()
     
     # Verify cost settings were created
-    db_settings = db_session.query(CostSetting).all()
+    db_settings = db_session.query(CostItem).all()
     assert len(db_settings) == 3
     
     # Check specific setting
-    fuel_setting = db_session.query(CostSetting).filter(CostSetting.type == "fuel").first()
+    fuel_setting = db_session.query(CostItem).filter(CostItem.type == "fuel").first()
     assert fuel_setting is not None
     assert fuel_setting.base_value == 1.5
     assert fuel_setting.currency == "EUR"

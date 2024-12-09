@@ -3,7 +3,7 @@ from uuid import uuid4
 from datetime import datetime, UTC
 
 from backend.domain.services.cost_calculation_service import CostCalculationService
-from backend.domain.entities import CostSetting
+from backend.domain.entities import CostItem
 
 @pytest.fixture
 def service():
@@ -12,7 +12,7 @@ def service():
 @pytest.fixture
 def mock_cost_items():
     return [
-        CostSetting(
+        CostItem(
             id=uuid4(),
             type="fuel",
             category="variable",
@@ -21,7 +21,7 @@ def mock_cost_items():
             multiplier=1.0,
             currency="EUR"
         ),
-        CostSetting(
+        CostItem(
             id=uuid4(),
             type="driver",
             category="variable",

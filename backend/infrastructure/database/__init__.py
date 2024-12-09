@@ -1,5 +1,5 @@
 from .db_setup import init_db, get_db, get_db_session, SessionLocal, engine
-from .models import Route, Offer, CostSetting
+from .models import Route, Offer, CostItem
 from .repository import Repository
 
 __all__ = [
@@ -10,6 +10,6 @@ __all__ = [
     'engine',
     'Route',
     'Offer',
-    'CostSetting',
+    'CostItem',
     'Repository'
 ]

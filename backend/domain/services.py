@@ -4,7 +4,7 @@ from uuid import UUID
 from dataclasses import asdict
 
 from backend.domain.entities import (
-    Route, Location, TransportType, Cargo, CostSetting, MainRoute, EmptyDriving, CountrySegment,
+    Route, Location, TransportType, Cargo, CostItem, MainRoute, EmptyDriving, CountrySegment,
     TimelineEvent, Offer, RouteSegment
 )
 
@@ -75,25 +75,25 @@ class CostCalculationService:
     def calculate_total_cost(
         self,
         route: Route,
-        cost_settings: Optional[List[CostSetting]] = None
+        cost_items: Optional[List[CostItem]] = None
     ) -> Dict:
         """Calculate total cost for a route."""
-        if not cost_settings:
-            # Use default cost settings if none provided
-            cost_settings = [
-                CostSetting(
+        if not cost_items:
+            # Use default cost items if none provided
+            cost_items = [
+                CostItem(
                     type="distance",
                     category="variable",
                     base_value=1.5,
                     description="Cost per kilometer"
                 ),
-                CostSetting(
+                CostItem(
                     type="time",
                     category="variable",
                     base_value=50.0,
                     description="Cost per hour"
                 ),
-                CostSetting(
+                CostItem(
                     type="fixed",
                     category="fixed",
                     base_value=100.0,
@@ -112,16 +112,16 @@ class CostCalculationService:
             segment_cost += segment.base_cost if hasattr(segment, 'base_cost') else 0.0
             
             # Add variable costs based on distance and time
-            for cost_setting in cost_settings:
-                if not cost_setting.is_enabled:
+            for cost_item in cost_items:
+                if not cost_item.is_enabled:
                     continue
 
-                if cost_setting.type == "distance":
-                    segment_cost += segment.distance_km * cost_setting.base_value * cost_setting.multiplier
-                elif cost_setting.type == "time":
-                    segment_cost += segment.duration_hours * cost_setting.base_value * cost_setting.multiplier
-                elif cost_setting.type == "fixed":
-                    segment_cost += cost_setting.base_value * cost_setting.multiplier
+                if cost_item.type == "distance":
+                    segment_cost += segment.distance_km * cost_item.base_value * cost_item.multiplier
+                elif cost_item.type == "time":
+                    segment_cost += segment.duration_hours * cost_item.base_value * cost_item.multiplier
+                elif cost_item.type == "fixed":
+                    segment_cost += cost_item.base_value * cost_item.multiplier
 
             cost_breakdown[segment_name] = segment_cost
             total_cost += segment_cost

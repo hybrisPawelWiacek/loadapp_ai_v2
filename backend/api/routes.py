@@ -3,7 +3,7 @@ from typing import Dict, Any, List
 from backend.services.cost_calculation_service import CostCalculationService
 from backend.infrastructure.database.repository import Repository
 from backend.infrastructure.database.db_setup import SessionLocal
-from backend.infrastructure.database.models import CostSetting
+from backend.infrastructure.database.models import CostItem
 from pydantic import BaseModel, Field, validator
 import structlog
 from uuid import uuid4
@@ -13,15 +13,15 @@ logger = structlog.get_logger(__name__)
 app = FastAPI()
 
 # Pydantic models for request validation
-class CostSettingUpdate(BaseModel):
-    name: str = Field(..., description="Name of the cost setting")
-    value: float = Field(..., description="Value of the cost setting")
+class CostItemUpdate(BaseModel):
+    name: str = Field(..., description="Name of the cost item")
+    value: float = Field(..., description="Value of the cost item")
     type: str = Field(..., description="Type of cost (fuel, driver, toll, etc.)")
     category: str = Field(..., description="Category of cost (fixed, variable)")
     multiplier: float = Field(1.0, description="Multiplier to apply to the value")
     currency: str = Field("EUR", description="Currency of the cost value")
-    is_enabled: bool = Field(True, description="Whether this cost setting is enabled")
-    description: str = Field(None, description="Description of the cost setting")
+    is_enabled: bool = Field(True, description="Whether this cost item is enabled")
+    description: str = Field(None, description="Description of the cost item")
 
     @validator('value')
     def validate_value(cls, v):
@@ -108,17 +108,17 @@ async def get_cost_settings(db: SessionLocal = Depends(get_db)) -> List[Dict[str
 
 @app.post("/costs/settings")
 async def update_cost_settings(
-    settings: List[CostSettingUpdate],
+    settings: List[CostItemUpdate],
     db: SessionLocal = Depends(get_db)
 ) -> Dict[str, Any]:
     """
     Update cost settings
     """
     try:
-        # Convert Pydantic models to CostSetting objects
-        cost_settings = []
+        # Convert Pydantic models to CostItem objects
+        cost_items = []
         for setting in settings:
-            cost_setting = CostSetting(
+            cost_item = CostItem(
                 id=uuid4(),
                 name=setting.name,
                 value=setting.value,
@@ -130,10 +130,10 @@ async def update_cost_settings(
                 description=setting.description,
                 last_updated=datetime.utcnow()
             )
-            cost_settings.append(cost_setting)
+            cost_items.append(cost_item)
 
         # Bulk update settings
-        success = repository.bulk_update_cost_settings(cost_settings)
+        success = repository.bulk_update_cost_settings(cost_items)
         if success:
             # Refresh cost calculation service cache
             cost_calculation_service._load_cost_settings()

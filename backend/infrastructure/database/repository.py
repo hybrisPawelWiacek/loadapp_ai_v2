@@ -2,10 +2,10 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from dataclasses import asdict
-from .models import Route as RouteModel, Offer, CostSetting
+from .models import Route as RouteModel, Offer, CostItem
 from backend.domain.entities import (
     Route, Location, EmptyDriving, MainRoute, 
-    TransportType, Cargo, TimelineEvent, CountrySegment
+    TransportType, Cargo, TimelineEvent, CountrySegment, CostItem
 )
 from uuid import UUID
 from backend.infrastructure.monitoring.performance_metrics import measure_db_query_time
@@ -18,7 +18,7 @@ class Repository:
     def __init__(self, db: Session):
         self.db = db
         self.logger = structlog.get_logger(__name__)
-        self._cost_settings_cache: Dict[str, CostSetting] = {}
+        self._cost_items_cache: Dict[str, CostItem] = {}
         self._cache_lock = Lock()
 
     # Route methods
@@ -120,43 +120,85 @@ class Repository:
         return self.db.query(Offer).all()
 
     # Cost Setting methods
-    @measure_db_query_time(query_type="get", table="cost_settings")
-    def get_cost_setting(self, cost_setting_id: str) -> Optional[CostSetting]:
-        return self.db.query(CostSetting).filter(CostSetting.id == cost_setting_id).first()
+    def _cost_setting_to_cost_item(self, setting: CostItem) -> CostItem:
+        """Transform database CostItem to domain CostItem"""
+        return CostItem(
+            id=setting.id,
+            type=setting.type,
+            category=setting.category,
+            base_value=setting.value,
+            description=setting.description,
+            multiplier=setting.multiplier,
+            currency=setting.currency,
+            is_enabled=setting.is_enabled
+        )
 
-    @measure_db_query_time(query_type="list", table="cost_settings")
-    def list_cost_settings(self) -> List[CostSetting]:
-        return self.db.query(CostSetting).all()
+    def _cost_item_to_setting_dict(self, item: CostItem) -> Dict[str, Any]:
+        """Transform domain CostItem to database CostItem dict"""
+        return {
+            "id": item.id,
+            "name": f"{item.type}_{item.category}",
+            "type": item.type,
+            "category": item.category,
+            "value": item.base_value,
+            "multiplier": item.multiplier,
+            "currency": item.currency,
+            "is_enabled": item.is_enabled,
+            "description": item.description
+        }
 
     @measure_db_query_time(query_type="create", table="cost_settings")
-    def create_cost_setting(self, cost_setting_data: Dict[str, Any]) -> CostSetting:
-        """Create a new cost setting in the database."""
-        cost_setting = CostSetting(**cost_setting_data)
-        self.db.add(cost_setting)
-        self.db.commit()
-        self.db.refresh(cost_setting)
-        return cost_setting
+    def create_cost_setting(self, cost_item: CostItem) -> CostItem:
+        """Create a new cost setting from a domain CostItem."""
+        try:
+            setting_data = self._cost_item_to_setting_dict(cost_item)
+            db_setting = CostItem(**setting_data)
+            self.db.add(db_setting)
+            self.db.commit()
+            self.db.refresh(db_setting)
+            return self._cost_setting_to_cost_item(db_setting)
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            self.logger.error("create_cost_setting_failed", error=str(e))
+            raise
+
+    @measure_db_query_time(query_type="get", table="cost_settings")
+    def get_cost_setting(self, cost_setting_id: str) -> Optional[CostItem]:
+        """Get a cost setting by ID and return as domain CostItem."""
+        db_setting = self.db.query(CostItem).filter(CostItem.id == cost_setting_id).first()
+        if db_setting:
+            return self._cost_setting_to_cost_item(db_setting)
+        return None
+
+    @measure_db_query_time(query_type="list", table="cost_settings")
+    def list_cost_settings(self) -> List[CostItem]:
+        """List all cost settings as domain CostItems."""
+        settings = self.db.query(CostItem).all()
+        return [self._cost_setting_to_cost_item(s) for s in settings]
 
     @measure_db_query_time(query_type="update", table="cost_settings")
-    def update_cost_setting(self, cost_setting: CostSetting) -> Optional[CostSetting]:
-        """Update a cost setting in the database."""
-        db_setting = self.get_cost_setting(str(cost_setting.id))
-        if not db_setting:
-            return None
+    def update_cost_setting(self, cost_item: CostItem) -> Optional[CostItem]:
+        """Update a cost setting from a domain CostItem."""
+        try:
+            db_setting = self.db.query(CostItem).filter(CostItem.id == cost_item.id).first()
+            if not db_setting:
+                return None
 
-        # Update fields directly
-        for key in ['base_value', 'multiplier', 'is_enabled']:
-            if hasattr(cost_setting, key):
-                value = getattr(cost_setting, key)
-                if value is not None:  # Only update if value is provided
+            setting_data = self._cost_item_to_setting_dict(cost_item)
+            for key, value in setting_data.items():
+                if key != 'id' and value is not None:
                     setattr(db_setting, key, value)
 
-        self.db.commit()
-        self.db.refresh(db_setting)
-        return db_setting
+            self.db.commit()
+            self.db.refresh(db_setting)
+            return self._cost_setting_to_cost_item(db_setting)
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            self.logger.error("update_cost_setting_failed", error=str(e))
+            raise
 
     @measure_db_query_time(query_type="update", table="cost_settings")
-    def save_cost_settings(self, cost_settings_data: List[Dict]) -> List[CostSetting]:
+    def save_cost_settings(self, cost_settings_data: List[Dict]) -> List[CostItem]:
         """Save multiple cost settings to the database."""
         cost_settings = []
         for data in cost_settings_data:
@@ -171,7 +213,7 @@ class Repository:
                     continue
 
             # Create new setting if no id or setting not found
-            setting = CostSetting(**data)
+            setting = CostItem(**data)
             self.db.add(setting)
             cost_settings.append(setting)
 
@@ -181,12 +223,12 @@ class Repository:
         return cost_settings
 
     @measure_db_query_time(query_type="update", table="cost_settings")
-    def bulk_update_cost_settings(self, settings: List[CostSetting]) -> bool:
+    def bulk_update_cost_settings(self, settings: List[CostItem]) -> bool:
         """
         Update multiple cost settings in a single transaction.
         
         Args:
-            settings: List of CostSetting objects to update
+            settings: List of CostItem objects to update
             
         Returns:
             bool: True if update was successful, False otherwise
@@ -205,7 +247,7 @@ class Repository:
             
             # Invalidate cache after successful update
             with self._cache_lock:
-                self._cost_settings_cache.clear()
+                self._cost_items_cache.clear()
             
             self.logger.info("bulk_update_completed", count=len(settings))
             return True
@@ -216,13 +258,13 @@ class Repository:
             raise
     
     @measure_db_query_time(query_type="read", table="cost_settings")
-    def cache_cost_settings(self) -> Dict[str, CostSetting]:
+    def cache_cost_settings(self) -> Dict[str, CostItem]:
         """
         Load and cache all cost settings for quick access.
         Uses thread-safe implementation with locks.
         
         Returns:
-            Dict[str, CostSetting]: Dictionary of name-indexed cost settings
+            Dict[str, CostItem]: Dictionary of name-indexed cost settings
             
         Raises:
             SQLAlchemyError: If database operation fails
@@ -230,24 +272,24 @@ class Repository:
         try:
             with self._cache_lock:
                 # Check if cache is already populated
-                if self._cost_settings_cache:
+                if self._cost_items_cache:
                     self.logger.info("returning_cached_settings", 
-                                   count=len(self._cost_settings_cache))
-                    return self._cost_settings_cache
+                                   count=len(self._cost_items_cache))
+                    return self._cost_items_cache
                 
                 # Load settings from database
-                settings = self.db.query(CostSetting).filter(
-                    CostSetting.is_enabled == True
+                settings = self.db.query(CostItem).filter(
+                    CostItem.is_enabled == True
                 ).all()
                 
                 # Update cache
-                self._cost_settings_cache = {
+                self._cost_items_cache = {
                     setting.name: setting for setting in settings
                 }
                 
                 self.logger.info("cost_settings_cached", 
-                               count=len(self._cost_settings_cache))
-                return self._cost_settings_cache
+                               count=len(self._cost_items_cache))
+                return self._cost_items_cache
                 
         except SQLAlchemyError as e:
             self.logger.error("cache_update_failed", error=str(e))
@@ -326,11 +368,11 @@ class Repository:
                             error=str(e))
             raise
     
-    def get_enabled_cost_settings(self) -> List[CostSetting]:
+    def get_enabled_cost_settings(self) -> List[CostItem]:
         """Get all enabled cost settings."""
         try:
-            settings = self.db.query(CostSetting).filter(
-                CostSetting.is_enabled == True
+            settings = self.db.query(CostItem).filter(
+                CostItem.is_enabled == True
             ).all()
             
             self.logger.info("enabled_settings_retrieved", 

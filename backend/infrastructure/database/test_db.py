@@ -3,7 +3,7 @@ from .db_setup import init_db, SessionLocal
 from .repository import Repository
 from backend.domain.entities import (
     Location, TransportType, Cargo, Route, MainRoute, EmptyDriving, CountrySegment,
-    CostSetting, Offer
+    CostItem, Offer
 )
 from uuid import uuid4
 
@@ -16,18 +16,27 @@ def test_database_setup():
     repo = Repository(db)
     
     try:
-        # Create a test cost setting
-        cost_setting = CostSetting(
-            id=str(uuid4()),
+        # Create a test cost setting using domain model
+        cost_item = CostItem(
+            id=uuid4(),
             type="fuel",
             category="variable",
             base_value=1.5,
-            multiplier=1.0,
             description="Fuel cost per kilometer",
+            multiplier=1.0,
+            currency="EUR",
             is_enabled=True
         )
-        db_cost_setting = repo.create_cost_setting(cost_setting.__dict__)
-        print(f"Created cost setting: {db_cost_setting.id}")
+        
+        # Create cost setting through repository
+        db_cost_setting = repo.create_cost_setting(cost_item)
+        assert db_cost_setting.type == cost_item.type
+        assert db_cost_setting.base_value == cost_item.base_value
+        
+        # Test retrieval
+        retrieved_item = repo.get_cost_setting(str(cost_item.id))
+        assert retrieved_item is not None
+        assert retrieved_item.base_value == cost_item.base_value
         
         # Create test route with proper domain entities
         origin = Location(
@@ -113,7 +122,7 @@ def test_database_setup():
         print(f"Created offer: {db_offer.id}")
         
         # Test retrieving the data
-        retrieved_cost_setting = repo.get_cost_setting(db_cost_setting.id)
+        retrieved_cost_setting = repo.get_cost_setting(str(cost_item.id))
         retrieved_route = repo.get_route(db_route.id)
         retrieved_offer = repo.get_offer(db_offer.id)
 

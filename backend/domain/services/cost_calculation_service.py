@@ -4,7 +4,7 @@ from uuid import uuid4
 import structlog
 from dataclasses import dataclass
 
-from ..entities import Route, CostSetting, Cargo
+from ..entities import Route, CostItem, Cargo
 from backend.infrastructure.monitoring.performance_metrics import measure_service_operation_time
 
 @dataclass
@@ -321,11 +321,11 @@ class CostCalculationService:
                             error=str(e))
             raise CostCalculationError(f"Unexpected error during cost calculation: {str(e)}")
 
-    def get_cost_items(self) -> List[CostSetting]:
+    def get_cost_items(self) -> List[CostItem]:
         """Get list of cost items with their current settings"""
         try:
             cost_items = [
-                CostSetting(
+                CostItem(
                     id=uuid4(),
                     type="fuel",
                     category="variable",

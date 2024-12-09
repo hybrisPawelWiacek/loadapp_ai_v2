@@ -2,7 +2,7 @@ from .location import Location
 from .timeline import TimelineEvent
 from .route import Route, MainRoute, EmptyDriving, CountrySegment
 from .cargo import Cargo, TransportType, Capacity
-from .cost import CostSetting, Cost
+from .cost import CostItem, Cost
 from .offer import Offer
 from .error import ServiceError
 from .user import User, BusinessEntity
@@ -18,7 +18,7 @@ __all__ = [
     'Cargo',
     'TransportType',
     'Capacity',
-    'CostSetting',
+    'CostItem',
     'Cost',
     'Offer',
     'ServiceError',

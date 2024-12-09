@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from backend.domain.entities import (
     Location, Route, EmptyDriving, MainRoute, CountrySegment,
-    TimelineEvent, TransportType, Cargo, CostSetting
+    TimelineEvent, TransportType, Cargo, CostItem
 )
 from backend.infrastructure.database.repository import Repository
 
@@ -90,7 +90,7 @@ def mock_cargo():
 @pytest.fixture
 def mock_cost_items():
     return [
-        CostSetting(
+        CostItem(
             id=uuid4(),
             type="fuel",
             category="variable",
@@ -100,7 +100,7 @@ def mock_cost_items():
             is_enabled=True,
             description="Fuel cost per kilometer"
         ),
-        CostSetting(
+        CostItem(
             id=uuid4(),
             type="driver",
             category="variable",

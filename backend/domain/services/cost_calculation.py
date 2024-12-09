@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional
 import structlog
-from ..entities import Route, CostSetting
+from ..entities import Route, CostItem
 
 logger = structlog.get_logger(__name__)
 
@@ -11,7 +11,7 @@ class CostCalculationService:
     def calculate_total_cost(
         self,
         route: Route,
-        cost_items: Optional[List[CostSetting]] = None
+        cost_items: Optional[List[CostItem]] = None
     ) -> Dict[str, float]:
         """Calculate total cost and cost breakdown for a route."""
         self.logger.info(
@@ -48,7 +48,7 @@ class CostCalculationService:
 
         return cost_breakdown
 
-    def _calculate_item_cost(self, item: CostSetting, route: Route) -> float:
+    def _calculate_item_cost(self, item: CostItem, route: Route) -> float:
         """Calculate cost for a specific cost item."""
         total_distance = route.main_route.distance_km + route.empty_driving.distance_km
         total_hours = route.total_duration_hours
@@ -80,12 +80,12 @@ class CostCalculationService:
                 # For unknown cost types, use base value * multiplier
                 return item.base_value * item.multiplier
 
-    def _get_default_cost_items(self) -> List[CostSetting]:
+    def _get_default_cost_items(self) -> List[CostItem]:
         """Return default cost items with reasonable values."""
         from uuid import uuid4
 
         return [
-            CostSetting(
+            CostItem(
                 id=uuid4(),
                 type="fuel",
                 category="variable",
@@ -94,7 +94,7 @@ class CostCalculationService:
                 multiplier=1.0,
                 is_enabled=True
             ),
-            CostSetting(
+            CostItem(
                 id=uuid4(),
                 type="driver",
                 category="variable",
@@ -103,7 +103,7 @@ class CostCalculationService:
                 multiplier=1.0,
                 is_enabled=True
             ),
-            CostSetting(
+            CostItem(
                 id=uuid4(),
                 type="tolls",
                 category="variable",
@@ -112,7 +112,7 @@ class CostCalculationService:
                 multiplier=1.0,
                 is_enabled=True
             ),
-            CostSetting(
+            CostItem(
                 id=uuid4(),
                 type="maintenance",
                 category="variable",
@@ -121,7 +121,7 @@ class CostCalculationService:
                 multiplier=1.0,
                 is_enabled=True
             ),
-            CostSetting(
+            CostItem(
                 id=uuid4(),
                 type="insurance",
                 category="fixed",

@@ -3,7 +3,7 @@ from uuid import UUID
 from typing import Dict
 
 @dataclass
-class CostSetting:
+class CostItem:
     id: UUID
     type: str
     category: str

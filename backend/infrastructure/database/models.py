@@ -48,7 +48,7 @@ class Offer(Base):
     # Relationship with route
     route = relationship("Route", back_populates="offers")
 
-class CostSetting(Base):
+class CostItem(Base):
     """Model for storing cost calculation settings."""
     __tablename__ = 'cost_settings'
 
@@ -58,13 +58,14 @@ class CostSetting(Base):
     category = Column(String(50), nullable=False)
     value = Column(Float, nullable=False)
     multiplier = Column(Float, nullable=False, default=1.0)
-    currency = Column(String(3), nullable=False)
+    currency = Column(String(3), nullable=False, default="EUR")
     is_enabled = Column(Boolean, nullable=False, default=True)
     description = Column(String(500))
     last_updated = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
         Index('ix_cost_settings_name', 'name'),
+        Index('ix_cost_settings_type_category', 'type', 'category'),
     )
 
 class MetricLog(Base):

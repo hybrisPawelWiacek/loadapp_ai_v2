@@ -34,5 +34,5 @@ def get_db_session():
 def init_db():
     """Initialize the database."""
     # Import models here to avoid circular imports
-    from .models import Route, Offer, CostSetting, MetricLog, MetricAggregate, AlertRule, AlertEvent
+    from .models import Route, Offer, CostItem, MetricLog, MetricAggregate, AlertRule, AlertEvent
     Base.metadata.create_all(bind=engine)

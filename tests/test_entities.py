@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 from typing import List, Dict
 from backend.domain.entities import (
     Location, TimelineEvent, Route, MainRoute, EmptyDriving,
-    CountrySegment, Cargo, TransportType, Capacity, CostSetting,
+    CountrySegment, Cargo, TransportType, Capacity, CostItem,
     Offer, ServiceError, User, BusinessEntity, TruckDriverPair
 )
 
@@ -126,8 +126,8 @@ def test_business_entities():
     assert isinstance(cargo.weight, float)
     assert isinstance(cargo.special_requirements, list)
     
-    # Test CostSetting
-    cost = CostSetting(
+    # Test CostItem
+    cost = CostItem(
         id=uuid4(),
         type="fuel",
         category="variable",
@@ -189,8 +189,8 @@ def test_service_error():
     assert isinstance(error.timestamp, datetime)
 
 def test_cost_setting():
-    # Test CostSetting
-    cost = CostSetting(
+    # Test CostItem
+    cost = CostItem(
         id=uuid4(),
         type="fuel",
         category="variable",
