@@ -1,0 +1,165 @@
+import streamlit as st
+import requests
+from datetime import datetime
+import pandas as pd
+import plotly.express as px
+
+# Constants
+API_URL = "http://127.0.0.1:5000"
+HEADERS = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+}
+
+st.set_page_config(
+    page_title="LoadApp.AI - Offer Review",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.title("📊 Offer Review")
+st.markdown("""
+    Review and analyze past offers, including route details, costs, and AI insights.
+""")
+
+# Filters
+st.sidebar.header("Filters")
+date_range = st.sidebar.date_input(
+    "Date Range",
+    value=(datetime.now().date(), datetime.now().date()),
+    key="date_range"
+)
+
+min_price = st.sidebar.number_input("Min Price (EUR)", value=0)
+max_price = st.sidebar.number_input("Max Price (EUR)", value=10000)
+
+# Pagination
+limit = st.sidebar.number_input("Items per page", min_value=1, value=10)
+page = st.sidebar.number_input("Page", min_value=1, value=1)
+offset = (page - 1) * limit
+
+try:
+    # Fetch offers
+    response = requests.get(
+        f"{API_URL}/data/review",
+        params={
+            "limit": limit,
+            "offset": offset,
+            "min_price": min_price,
+            "max_price": max_price,
+            "start_date": date_range[0].isoformat(),
+            "end_date": date_range[1].isoformat()
+        },
+        headers=HEADERS
+    )
+    
+    if response.status_code == 200:
+        offers = response.json()
+        
+        if not offers:
+            st.info("No offers found matching your criteria.")
+        else:
+            # Create DataFrame for analytics
+            df = pd.DataFrame(offers)
+            df['created_at'] = pd.to_datetime(df['created_at'])
+            df['date'] = df['created_at'].dt.date
+            
+            # Analytics Section
+            st.subheader("Analytics Overview")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                avg_price = df['final_price'].mean()
+                st.metric("Average Price", f"€{avg_price:.2f}")
+                
+            with col2:
+                avg_margin = df['margin_percentage'].mean()
+                st.metric("Average Margin", f"{avg_margin:.1f}%")
+                
+            with col3:
+                total_offers = len(df)
+                st.metric("Total Offers", total_offers)
+            
+            # Price Trend Chart
+            st.subheader("Price Trends")
+            fig = px.line(
+                df,
+                x='created_at',
+                y='final_price',
+                title='Offer Prices Over Time'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Offer List
+            st.subheader("Offer Details")
+            for offer in offers:
+                with st.expander(
+                    f"Offer {offer['id']} - {offer['created_at']} - €{offer['final_price']:.2f}"
+                ):
+                    tabs = st.tabs(["Overview", "Route Details", "Cost Breakdown", "AI Insights"])
+                    
+                    with tabs[0]:  # Overview
+                        col4, col5 = st.columns(2)
+                        with col4:
+                            st.write("**Pricing**")
+                            st.write(f"Base Price: €{offer['base_price']:.2f}")
+                            st.write(f"Margin: {offer['margin_percentage']}%")
+                            st.write(f"Final Price: €{offer['final_price']:.2f}")
+                        with col5:
+                            st.write("**Status**")
+                            st.write(f"Created: {offer['created_at']}")
+                            st.write(f"Status: {offer['status'].title()}")
+                    
+                    with tabs[1]:  # Route Details
+                        try:
+                            route_response = requests.get(
+                                f"{API_URL}/route/{offer['route_id']}",
+                                headers=HEADERS
+                            )
+                            if route_response.status_code == 200:
+                                route = route_response.json()
+                                st.write("**Route Information**")
+                                st.write(f"Origin: {route['origin']['address']}")
+                                st.write(f"Destination: {route['destination']['address']}")
+                                st.write(f"Total Duration: {route['total_duration_hours']} hours")
+                                
+                                # Timeline
+                                st.write("**Timeline**")
+                                for event in route['timeline']:
+                                    st.write(
+                                        f"- {event['event_type'].title()}: "
+                                        f"{event['planned_time']} at {event['location']['address']}"
+                                    )
+                            else:
+                                st.warning("Route details not available")
+                        except Exception as e:
+                            st.error(f"Error loading route details: {str(e)}")
+                    
+                    with tabs[2]:  # Cost Breakdown
+                        st.write("**Cost Components**")
+                        for cost_type, amount in offer['cost_breakdown'].items():
+                            if cost_type != "total":
+                                st.write(f"- {cost_type.title()}: €{amount:.2f}")
+                        st.write(f"**Total Cost: €{offer['cost_breakdown']['total']:.2f}**")
+                    
+                    with tabs[3]:  # AI Insights
+                        st.info(f"🎯 Fun Fact: {offer['fun_fact']}")
+            
+            # Pagination controls
+            st.write("---")
+            col6, col7 = st.columns(2)
+            with col6:
+                if page > 1:
+                    if st.button("← Previous Page"):
+                        st.session_state.page = page - 1
+                        st.experimental_rerun()
+            with col7:
+                if len(offers) == limit:
+                    if st.button("Next Page →"):
+                        st.session_state.page = page + 1
+                        st.experimental_rerun()
+    else:
+        st.error(f"Failed to load offers: {response.text}")
+        
+except Exception as e:
+    st.error(f"An error occurred: {str(e)}")

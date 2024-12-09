@@ -1,0 +1,9 @@
+Metadata-Version: 2.1
+Name: loadapp
+Version: 0.1
+Requires-Dist: flask
+Requires-Dist: streamlit
+Requires-Dist: requests
+Requires-Dist: plotly
+Requires-Dist: openai
+Requires-Dist: pytest
