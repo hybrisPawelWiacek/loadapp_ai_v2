@@ -75,35 +75,101 @@ class TimelineEvent:
 
 ### CostCalculationService
 
-**Purpose:** Manages all cost-related calculations and pricing logic.
+**Purpose:** Handles cost calculations for routes, incorporating various cost components and optimization suggestions.
 
-**Key Features:**
-- Calculates total costs based on route distance and duration
-- Handles empty driving costs separately
-- Uses fixed rates for initial implementation:
-  - Base cost: €500.00
-  - Distance rate: €0.50 per kilometer
-  - Time rate: €50.00 per hour
-  - Empty driving rate: €0.30 per kilometer
+**Key Responsibilities:**
+- Route cost calculation with component breakdown
+- Cost setting application and validation
+- Historical cost pattern analysis
+- Integration with cost optimization
+- Performance monitoring and metrics tracking
 
-**Main Methods:**
+**Key Components:**
 ```python
-def calculate_total_cost(route: Route) -> Dict:
-    """Calculate total transportation cost and cost breakdown."""
+@dataclass
+class ValidationError:
+    """Error details from route validation."""
+    code: str
+    message: str
+    details: Optional[Dict] = None
 ```
 
-**Logging:**
-- Extensive logging added throughout the calculation process:
-  - Route distances (main route and empty driving)
-  - Route duration
-  - Cost calculation steps
-  - Any errors that occur
+**Methods:**
+```python
+def calculate_route_cost(self, route: Route) -> Dict:
+    """
+    Calculate total route cost with optimization insights.
+    Returns:
+        {
+            "breakdown": Dict[str, float],  # Cost component breakdown
+            "total": float,                 # Total cost
+            "patterns": List[Dict],         # Cost patterns identified
+            "suggestions": List[Dict]       # Optimization suggestions
+        }
+    """
 
-**Future Enhancements:**
-- Re-implement detailed cost breakdowns
-- Add country-specific cost calculations
-- Support for different cargo types and requirements
-- Custom rate configurations
+def _perform_calculation(
+    self,
+    route: Route,
+    cost_settings: List[CostSetting]
+) -> Dict[str, float]:
+    """Calculate costs using enabled settings."""
+```
+
+**Cost Components:**
+- Fuel costs (distance * consumption rate * fuel price)
+- Time-based costs (driver wages, etc.)
+- Distance-based costs (maintenance, etc.)
+- Weight-based costs
+- Cargo-specific costs
+
+**Performance Monitoring:**
+- Operation timing via `@measure_service_operation_time`
+- Cost component tracking
+- Calculation success/failure metrics
+- Pattern analysis metrics
+
+### CostOptimizationService
+
+**Purpose:** Analyzes cost patterns and provides optimization suggestions for route costs.
+
+**Key Responsibilities:**
+- Cost pattern analysis
+- Historical data comparison
+- Optimization suggestion generation
+- Cost efficiency scoring
+
+**Methods:**
+```python
+def analyze_and_optimize(
+    self,
+    route: Route,
+    current_costs: Dict[str, float],
+    historical_costs: List[Dict]
+) -> OptimizationResult:
+    """
+    Analyze costs and provide optimization insights.
+    Returns OptimizationResult with patterns and suggestions.
+    """
+```
+
+**Pattern Types:**
+- Seasonal variations
+- Route-specific patterns
+- Cargo-type correlations
+- Cost component anomalies
+
+**Integration:**
+- Direct integration with CostCalculationService
+- Access to historical cost data
+- Metrics service integration for pattern tracking
+
+**Recent Updates:**
+- Removed dependency on generic OptimizationService
+- Streamlined optimization workflow
+- Enhanced pattern detection
+- Improved metrics tracking
+- Added structured validation error handling
 
 ### OfferService
 

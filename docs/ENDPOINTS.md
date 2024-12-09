@@ -272,6 +272,151 @@ Generates an offer based on route and margin.
 - `404 Not Found`: Route not found
 - `500 Internal Server Error`: Server-side error
 
+### 4. Offer Management
+
+#### GET /api/v1/offers
+
+Retrieves a filtered list of offers.
+
+##### Query Parameters
+- `start_date` (optional): ISO format date for filtering offers after this date
+- `end_date` (optional): ISO format date for filtering offers before this date
+- `min_price` (optional): Minimum price filter (float)
+- `max_price` (optional): Maximum price filter (float)
+- `status` (optional): Filter by offer status
+- `currency` (optional): Filter by currency
+- `countries` (optional): JSON array of country codes
+- `regions` (optional): JSON array of region codes
+- `client_id` (optional): UUID of the client
+- `page` (optional, default: 1): Page number for pagination
+- `page_size` (optional, default: 10, max: 100): Number of items per page
+- `include_settings` (optional): Include offer settings in response
+- `include_history` (optional): Include offer history in response
+- `include_metrics` (optional): Include offer metrics in response
+
+##### Response Format
+```json
+{
+    "offers": [
+        {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "route_id": "660e8400-e29b-41d4-a716-446655440000",
+            "total_price": 1500.00,
+            "margin": 10.0,
+            "cost_breakdown": {
+                "base_cost": 1000.00,
+                "additional_costs": 200.00,
+                "margin_amount": 150.00
+            },
+            "status": "active",
+            "created_at": "2024-12-09T12:00:00Z",
+            "updated_at": "2024-12-09T12:30:00Z",
+            "client_name": "Example Client",
+            "client_contact": "contact@example.com",
+            "settings": {  // Only if include_settings=true
+                "pricing_rules": [],
+                "restrictions": []
+            },
+            "history": [  // Only if include_history=true
+                {
+                    "timestamp": "2024-12-09T12:00:00Z",
+                    "action": "created",
+                    "user_id": "system"
+                }
+            ],
+            "metrics": {  // Only if include_metrics=true
+                "views": 10,
+                "conversion_rate": 0.5
+            }
+        }
+    ],
+    "total": 50,
+    "page": 1,
+    "page_size": 10,
+    "total_pages": 5
+}
+```
+
+#### GET /api/v1/offers/<offer_id>
+
+Retrieves a specific offer by ID.
+
+##### Parameters
+- `offer_id`: UUID of the offer (required)
+
+##### Response Format
+Same as individual offer object from the list endpoint.
+
+#### POST /api/v1/offers
+
+Creates a new offer.
+
+##### Request Body
+```json
+{
+    "route_id": "660e8400-e29b-41d4-a716-446655440000",
+    "margin": 10.0,
+    "currency": "EUR",
+    "client_id": "770e8400-e29b-41d4-a716-446655440000",
+    "client_name": "Example Client",
+    "client_contact": "contact@example.com",
+    "geographic_restrictions": {
+        "countries": ["DE", "FR"],
+        "regions": ["EU"]
+    }
+}
+```
+
+##### Response Format
+Created offer object with 201 status code.
+
+#### PUT /api/v1/offers/<offer_id>
+
+Updates an existing offer.
+
+##### Parameters
+- `offer_id`: UUID of the offer (required)
+
+##### Request Body
+For status update:
+```json
+{
+    "status": "accepted"
+}
+```
+
+For full update:
+```json
+{
+    "margin": 15.0,
+    "currency": "USD",
+    "client_name": "Updated Client Name",
+    "client_contact": "new.contact@example.com",
+    "geographic_restrictions": {
+        "countries": ["US", "CA"],
+        "regions": ["NA"]
+    }
+}
+```
+
+##### Response Format
+Updated offer object with 200 status code.
+
+#### DELETE /api/v1/offers/<offer_id>
+
+Soft deletes an offer.
+
+##### Parameters
+- `offer_id`: UUID of the offer (required)
+- `reason` (query parameter, optional): Reason for deletion
+
+##### Response Format
+```json
+{
+    "message": "Offer deleted successfully"
+}
+```
+
 ### 5. Data Review
 
 #### GET /data/review
@@ -322,6 +467,34 @@ All error responses follow this format:
     }
 }
 ```
+
+## Error Handling
+
+All endpoints follow a consistent error handling pattern:
+
+#### Error Response Format
+```json
+{
+    "error": "Error type description",
+    "error_id": "550e8400-e29b-41d4-a716-446655440000",
+    "details": "Detailed error message",
+    "message": "User-friendly error message"
+}
+```
+
+#### Common Error Codes
+- 400: Bad Request (validation errors)
+- 404: Not Found
+- 422: Business Rule Violation
+- 500: Internal Server Error
+
+#### Logging
+All endpoints include structured logging with:
+- Request parameters
+- Client information (IP, user agent)
+- Endpoint and path information
+- Unique error IDs for traceability
+- Performance metrics
 
 ## Rate Limiting
 

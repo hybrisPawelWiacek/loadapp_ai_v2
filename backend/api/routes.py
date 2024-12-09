@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Body
+from fastapi import FastAPI, HTTPException, Depends, Body, APIRouter
 from typing import Dict, Any, List
 from backend.services.cost_calculation_service import CostCalculationService
 from backend.infrastructure.database.repository import Repository
@@ -11,6 +11,7 @@ from datetime import datetime
 
 logger = structlog.get_logger(__name__)
 app = FastAPI()
+api = APIRouter()
 
 # Pydantic models for request validation
 class CostItemUpdate(BaseModel):
@@ -61,40 +62,8 @@ def get_db():
 repository = Repository(SessionLocal())
 cost_calculation_service = CostCalculationService(repository)
 
-@app.post("/costs/{route_id}")
-async def calculate_costs_for_route(route_id: str, db: SessionLocal = Depends(get_db)) -> Dict[str, Any]:
-    """
-    Calculate costs for a given route ID and store them
-    """
-    try:
-        # Get route data from repository
-        route = repository.get_route(route_id)
-        if not route:
-            logger.error("route_not_found", route_id=route_id)
-            raise HTTPException(status_code=404, detail=f"Route with ID {route_id} not found")
-
-        # Calculate costs
-        costs = cost_calculation_service.calculate_costs({
-            'distance': getattr(route.main_route, 'distance', 0),
-            'duration': getattr(route.main_route, 'duration', 0)
-        })
-
-        # Update route with calculated costs
-        route.total_cost = costs['total_cost']
-        route.cost_breakdown = costs['breakdown']
-        repository.save_route(route)
-
-        logger.info("costs_calculated", route_id=route_id, total_cost=costs['total_cost'])
-        return costs
-
-    except ValueError as e:
-        logger.error("cost_calculation_validation_error", error=str(e), route_id=route_id)
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error("cost_calculation_failed", error=str(e), route_id=route_id)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/costs/settings")
+# Cost settings endpoints
+@api.get("/costs/settings")
 async def get_cost_settings(db: SessionLocal = Depends(get_db)) -> List[Dict[str, Any]]:
     """
     Get all cost settings
@@ -106,7 +75,7 @@ async def get_cost_settings(db: SessionLocal = Depends(get_db)) -> List[Dict[str
         logger.error("get_cost_settings_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/costs/settings")
+@api.post("/costs/settings")
 async def update_cost_settings(
     settings: List[CostItemUpdate],
     db: SessionLocal = Depends(get_db)
@@ -149,9 +118,63 @@ async def update_cost_settings(
         logger.error("update_cost_settings_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
+@api.get("/costs/settings/{path}")
+async def get_cost_setting(path: str, db: SessionLocal = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Get a specific cost setting
+    """
+    try:
+        setting = repository.get_cost_setting(path)
+        if not setting:
+            logger.error("cost_setting_not_found", path=path)
+            raise HTTPException(status_code=404, detail=f"Cost setting with path {path} not found")
+        return setting.to_dict()
+    except Exception as e:
+        logger.error("get_cost_setting_failed", error=str(e), path=path)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/costs/{route_id}")
+async def calculate_costs_for_route(route_id: str, db: SessionLocal = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Calculate costs for a given route ID and store them
+    """
+    try:
+        # Get route data from repository
+        route = repository.get_route(route_id)
+        if not route:
+            logger.error("route_not_found", route_id=route_id)
+            raise HTTPException(status_code=404, detail=f"Route with ID {route_id} not found")
+
+        # Calculate costs
+        costs = cost_calculation_service.calculate_costs({
+            'distance': getattr(route.main_route, 'distance', 0),
+            'duration': getattr(route.main_route, 'duration', 0)
+        })
+
+        # Update route with calculated costs
+        route.total_cost = costs['total_cost']
+        route.cost_breakdown = costs['breakdown']
+        repository.save_route(route)
+
+        logger.info("costs_calculated", route_id=route_id, total_cost=costs['total_cost'])
+        return costs
+
+    except ValueError as e:
+        logger.error("cost_calculation_validation_error", error=str(e), route_id=route_id)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("cost_calculation_failed", error=str(e), route_id=route_id)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/health")
 async def health_check():
     """
     Health check endpoint
     """
     return {"status": "healthy"}
+
+# Register routes
+api.add_api_resource(CostEndpoint, '/api/v1/costs', '/api/v1/costs/<cost_id>')
+api.add_api_resource(CostEndpoint, '/api/v1/costs/settings', endpoint='cost_settings')
+
+app.include_router(api)

@@ -1,3 +1,1 @@
-from .app import app
-
-__all__ = ['app']
+# Empty __init__.py file

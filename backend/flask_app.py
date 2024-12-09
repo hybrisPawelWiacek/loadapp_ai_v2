@@ -5,15 +5,25 @@ from uuid import UUID
 import structlog
 import logging
 import time
+from datetime import datetime
 
-from backend.api.endpoints import RouteEndpoint, CostEndpoint
+from backend.api.endpoints.route_endpoint import RouteEndpoint
+from backend.api.endpoints.cost_endpoint import CostEndpoint
+from backend.api.endpoints.offer_endpoint import OfferEndpoint
 from backend.domain.services.cost_calculation_service import CostCalculationService
 from backend.domain.services.ai_integration_service import AIIntegrationService
 from backend.domain.services.offer_service import OfferService
-from backend.infrastructure.database.repository import Repository
+from backend.domain.services.cost_optimization_service import CostOptimizationService
+from backend.infrastructure.database.repositories.cost_setting_repository import CostSettingsRepository
+from backend.infrastructure.database.session import SessionLocal, engine, Base
+from backend.infrastructure.monitoring.metrics_service import MetricsService
 from backend.infrastructure.monitoring.performance_metrics import PerformanceMetrics
-from backend.infrastructure.database.db_setup import SessionLocal, engine, Base, SQLALCHEMY_DATABASE_URL
+from backend.infrastructure.database.db_setup import SQLALCHEMY_DATABASE_URL
 from backend.infrastructure.database.init_db import init_db
+from backend.infrastructure.database.repositories.base_repository import BaseRepository
+from backend.infrastructure.database.repositories.versionable_repository import VersionableRepository
+from backend.infrastructure.database.repositories.offer_repository import OfferRepository
+from backend.infrastructure.database.models.offer import OfferModel
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -32,171 +42,166 @@ structlog.configure(
     cache_logger_on_first_use=False
 )
 
-logger = structlog.get_logger(__name__)
-
 def create_app():
     """Create and configure the Flask application."""
+    logger = structlog.get_logger(__name__)
     logger.info("creating_flask_app")
     
-    # Initialize Flask app
+    # Create Flask app
     app = Flask(__name__)
-    app.debug = True  # Enable debug mode
+    app.config['SQLALCHEMY_DATABASE_URI'] = SQLALCHEMY_DATABASE_URL
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     
-    # Basic configuration
-    app.config.from_mapping(
-        SECRET_KEY='dev',
-        DATABASE='loadapp.db',
-        SQLALCHEMY_DATABASE_URI=SQLALCHEMY_DATABASE_URL,
-        SQLALCHEMY_TRACK_MODIFICATIONS=False
-    )
+    # Configure CORS for Streamlit frontend
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": [
+                "http://localhost:8501",
+                "http://127.0.0.1:8501"
+            ],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization", "X-API-Key"],
+            "expose_headers": ["Content-Type"]
+        }
+    })
     
-    # Initialize API
+    # Optional: Global after_request handler for additional CORS headers
+    @app.after_request
+    def after_request(response):
+        origin = request.headers.get('Origin')
+        if origin in ["http://localhost:8501", "http://127.0.0.1:8501"]:
+            response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization,X-API-Key"
+        response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
+        return response
+    
     api = Api(app)
-    
-    # Enable CORS
-    CORS(app)
     
     logger.info("=== STARTING FLASK APP WITH NEW ROUTE CONFIGURATION ===")
     
-    # Test route to verify code changes
-    @app.route('/test_route')
-    def test_route():
-        return jsonify({"message": "Test route working!"})
-    
-    # Initialize database
-    logger.info("initializing_database")
-    init_db()  # This will create tables and add default cost settings
-    logger.info("database_initialized")
+    # Initialize database first
+    try:
+        init_db()
+    except Exception as e:
+        logger.error("Failed to initialize database", error=str(e))
+        raise
+        
+    # Then run migrations
+    try:
+        from .infrastructure.database.migrations.initial_migration import run_migrations
+        run_migrations()
+        logger.info("Database migrations completed successfully")
+    except Exception as e:
+        logger.error("Failed to run database migrations", error=str(e))
+        raise
     
     # Initialize database session
     session = SessionLocal()
     logger.info("database_session_created", session_type=type(session).__name__)
     
-    # Initialize repository with session
-    repository = Repository(session)
-    logger.info("repository_created", repository_type=type(repository).__name__)
+    # Initialize repositories
+    cost_settings_repository = CostSettingsRepository(session)
+    logger.info("cost_settings_repository_created")
     
-    # Initialize services
-    cost_service = CostCalculationService()
+    # Initialize monitoring services
+    metrics_service = MetricsService()
+    logger.info("metrics_service_created")
+    
+    # Initialize optimization services
+    cost_optimization_service = CostOptimizationService(metrics_service=metrics_service)
+    logger.info("cost_optimization_service_created")
+    
+    # Initialize core services
+    cost_service = CostCalculationService(
+        cost_settings_repository=cost_settings_repository,
+        metrics_service=metrics_service,
+        cost_optimization_service=cost_optimization_service
+    )
     logger.info("cost_service_created")
 
-    # Initialize AI service
     ai_service = AIIntegrationService()
     logger.info("ai_service_created")
 
-    # Initialize offer service
-    offer_service = OfferService(cost_service, ai_service, repository)
+    # Create a repository for offers
+    db_session = SessionLocal()
+    offer_repository = OfferRepository(db_session)
+
+    offer_service = OfferService(
+        db_repository=offer_repository,
+        cost_service=cost_service,
+        ai_service=ai_service
+    )
     logger.info("offer_service_created")
 
-    # Initialize metrics
-    app.metrics = PerformanceMetrics()
+    # Test route to verify code changes
+    @app.route('/test_route')
+    def test_route():
+        return jsonify({"message": "Test route working!"})
     
-    # Register route endpoint with Flask-RESTful
-    api.add_resource(RouteEndpoint, '/route', methods=['GET', 'POST'])
+    # Initialize endpoints with their required services
+    route_endpoint = RouteEndpoint(
+        repository=None,  # Will be created per request
+        metrics_service=metrics_service,
+        cost_settings_repository=cost_settings_repository,
+        cost_calculation_service=cost_service
+    )
+    cost_endpoint = CostEndpoint(
+        repository=None,  # Will be created per request
+        metrics_service=metrics_service,
+        cost_settings_repository=cost_settings_repository,
+        cost_calculation_service=cost_service,
+        cost_optimization_service=cost_optimization_service
+    )
+    offer_endpoint = OfferEndpoint(
+        offer_service=offer_service,
+        metrics_service=metrics_service
+    )
 
-    @app.route('/costs/<route_id>', methods=['POST'])
-    def calculate_costs(route_id):
-        """Direct route handler for cost calculation."""
-        logger.info("cost_calculation_request_received", route_id=route_id)
-        
-        try:
-            # Parse route ID
-            try:
-                route_uuid = UUID(str(route_id))
-                logger.info("route_id_parsed", route_id=route_id)
-            except ValueError:
-                logger.error("invalid_route_id_format", route_id=route_id)
-                return jsonify({"error": f"Invalid route ID format: {route_id}"}), 400
+    # Register API endpoints
+    api_bp = Blueprint('api', __name__, url_prefix='/api/v1')
+    api = Api(api_bp)
 
-            # Get route from database
-            route = repository.get_route(route_uuid)
-            if not route:
-                logger.error("route_not_found", route_id=route_id)
-                return jsonify({"error": f"Route not found: {route_id}"}), 404
+    # Register route endpoint
+    api.add_resource(
+        RouteEndpoint, 
+        '/routes', 
+        '/routes/<route_id>',
+        resource_class_kwargs={
+            'repository': None,  # Will be created per request
+            'metrics_service': metrics_service,
+            'cost_settings_repository': cost_settings_repository,
+            'cost_calculation_service': cost_service,
+            'cost_optimization_service': cost_optimization_service
+        }
+    )
 
-            logger.info("route_found", route_id=route_id)
+    # Register cost endpoint
+    api.add_resource(
+        CostEndpoint, 
+        '/costs', 
+        '/costs/<cost_id>',
+        resource_class_kwargs={
+            'repository': None,  # Will be created per request
+            'metrics_service': metrics_service,
+            'cost_settings_repository': cost_settings_repository,
+            'cost_calculation_service': cost_service,
+            'cost_optimization_service': cost_optimization_service
+        }
+    )
 
-            # Calculate costs
-            costs = cost_service.calculate_total_cost(route)
-            
-            logger.info("costs_calculated", route_id=route_id, costs=costs)
-            return jsonify(costs)
+    # Register offer endpoint
+    api.add_resource(
+        OfferEndpoint, 
+        '/offers', 
+        '/offers/<offer_id>',
+        resource_class_kwargs={
+            'offer_service': offer_service,
+            'metrics_service': metrics_service
+        }
+    )
 
-        except Exception as e:
-            logger.error("cost_calculation_error", error=str(e), route_id=route_id)
-            return jsonify({"error": str(e)}), 500
+    app.register_blueprint(api_bp)
 
-    @app.route('/offer', methods=['POST'])
-    def generate_offer():
-        """Generate an offer for a route."""
-        logger.info("offer_generation_request_received")
-        
-        try:
-            data = request.get_json()
-            if not data or 'route_id' not in data:
-                logger.error("missing_route_id")
-                return jsonify({"error": "Missing route_id in request"}), 400
-
-            # Get route from database
-            route = repository.get_route(UUID(data['route_id']))
-            if not route:
-                logger.error("route_not_found", route_id=data['route_id'])
-                return jsonify({"error": f"Route not found: {data['route_id']}"}), 404
-
-            # Generate offer
-            margin = data.get('margin', 20.0)  # Default 20% margin if not specified
-            offer = offer_service.generate_offer(route, margin=margin)
-            
-            logger.info("offer_generated", 
-                       offer_id=str(offer.id), 
-                       route_id=str(route.id),
-                       margin=margin)
-            
-            return jsonify(offer.to_dict()), 201
-
-        except ValueError as e:
-            logger.error("invalid_data_format", error=str(e))
-            return jsonify({"error": str(e)}), 400
-        except Exception as e:
-            logger.error("offer_generation_failed", error=str(e))
-            return jsonify({"error": str(e)}), 500
-
-    # Create cost endpoint instance
-    cost_endpoint = CostEndpoint()
-
-    # Register cost endpoints using Blueprint
-    costs_bp = Blueprint('costs', __name__)
-
-    @costs_bp.route('/settings', methods=['GET', 'POST'])
-    def handle_cost_settings():
-        logger.info("handling_cost_settings", method=request.method)
-        if request.method == 'GET':
-            return cost_endpoint.get()
-        else:
-            return cost_endpoint.post()
-
-    @costs_bp.route('/<route_id>', methods=['GET', 'POST'])
-    def handle_route_costs(route_id):
-        logger.info("handling_route_costs", 
-                   route_id=route_id, 
-                   method=request.method, 
-                   path=request.path,
-                   full_url=request.url)
-        try:
-            if request.method == 'GET':
-                return cost_endpoint.get(route_id)
-            else:
-                return cost_endpoint.post(route_id)
-        except Exception as e:
-            logger.error("route_costs_handler_error", 
-                        error=str(e),
-                        route_id=route_id,
-                        method=request.method)
-            return {"error": str(e)}, 500
-
-    # Register the blueprint with a URL prefix
-    app.register_blueprint(costs_bp, url_prefix='/costs')
-    
     # Log all registered routes
     logger.info("=== REGISTERED ROUTES ===")
     for rule in app.url_map.iter_rules():
@@ -281,4 +286,25 @@ def create_app():
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    import asyncio
+    from threading import Thread
+    
+    # Create a new event loop for the background thread
+    background_loop = asyncio.new_event_loop()
+    
+    def run_background_loop(loop):
+        """Run the event loop in the background."""
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+    
+    # Start background thread for asyncio
+    background_thread = Thread(target=run_background_loop, args=(background_loop,), daemon=True)
+    background_thread.start()
+    
+    try:
+        app.run(debug=True)
+    finally:
+        # Cleanup
+        background_loop.call_soon_threadsafe(background_loop.stop)
+        background_thread.join(timeout=1.0)
+        background_loop.close()

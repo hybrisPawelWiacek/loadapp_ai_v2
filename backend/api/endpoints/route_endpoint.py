@@ -1,63 +1,71 @@
-from flask import request, current_app, g
+from flask import request, jsonify
 from flask_restful import Resource
-from datetime import datetime
 import structlog
+from typing import List, Dict, Optional
+from datetime import datetime, timezone, timedelta
 from time import time as get_time
 
-from ...domain.services import RoutePlanningService
-from ...domain.entities import Location, Cargo, TransportType, Capacity
-from ...infrastructure.database.repository import Repository
-from ...infrastructure.database.config import SessionLocal
+from ...domain.services.route_service import RouteService
+from ...domain.services.cost_calculation_service import CostCalculationService
+from ...domain.services.cost_optimization_service import CostOptimizationService
+from ...domain.validators.cost_setting_validator import CostSettingValidator
+from ...infrastructure.database.repositories.route_repository import RouteRepository
+from ...infrastructure.database.repositories.cost_setting_repository import CostSettingsRepository
+from ...infrastructure.database.session import SessionLocal
+from ...infrastructure.monitoring.metrics_service import MetricsService
+from ...domain.entities import Location, Cargo, TransportType, Capacity, Route
+from ...domain.exceptions import RouteValidationException
 
 logger = structlog.get_logger(__name__)
 
 class RouteEndpoint(Resource):
-    def __init__(self):
-        super().__init__()
-        self.route_service = RoutePlanningService()
-        self.logger = structlog.get_logger(__name__)
+    def __init__(self, repository: Optional[RouteRepository] = None, metrics_service: Optional[MetricsService] = None, 
+                 cost_settings_repository: Optional[CostSettingsRepository] = None, 
+                 cost_calculation_service: Optional[CostCalculationService] = None,
+                 cost_optimization_service: Optional[CostOptimizationService] = None):
+        """Initialize the RouteEndpoint with optional dependencies."""
+        super().__init__()  # Add this back - it's needed for Flask-RESTful
+        
+        # Initialize repositories
+        if repository is None:
+            self.repository = RouteRepository(SessionLocal())
+        else:
+            self.repository = repository
+            
+        if cost_settings_repository is None:
+            self.cost_settings_repository = CostSettingsRepository(SessionLocal())
+        else:
+            self.cost_settings_repository = cost_settings_repository
+            
+        # Initialize services
+        self.metrics_service = metrics_service or MetricsService()
+        self.cost_optimization_service = cost_optimization_service or CostOptimizationService(metrics_service=self.metrics_service)
+        self.cost_calculation_service = cost_calculation_service or CostCalculationService(
+            cost_settings_repository=self.cost_settings_repository,
+            metrics_service=self.metrics_service,
+            cost_optimization_service=self.cost_optimization_service
+        )
+        
+        # Initialize validators
+        self.cost_validator = CostSettingValidator()
+        
+        # Initialize route service
+        self.route_service = RouteService(
+            repository=self.repository,
+            cost_settings_repository=self.cost_settings_repository,
+            cost_calculation_service=self.cost_calculation_service,
+            cost_validator=self.cost_validator,
+            metrics_service=self.metrics_service
+        )
+        
+        self.logger = logger.bind(endpoint="route")
         self.logger.info("route_endpoint_initialized")
-
-    def get_db_session(self):
-        """Get a database session for this request."""
-        try:
-            session = SessionLocal()
-            self.logger.info(
-                "database_session_created",
-                session_type=type(session).__name__
-            )
-            return session
-        except Exception as e:
-            self.logger.error(
-                "db_session_creation_failed",
-                error=str(e),
-                error_type=type(e).__name__,
-                traceback=True
-            )
-            return None
 
     def post(self):
         """Calculate a route."""
         self.logger.debug("Starting post method")
-        db = None
+        
         try:
-            self.logger.debug("Getting time")
-            start_time = get_time()
-            self.logger.debug("Got time successfully")
-
-            self.logger.debug("Creating database session")
-            # Create database session for this request
-            db = self.get_db_session()
-            if not db:
-                return {"error": "Database connection not available"}, 500
-            
-            # Create repository
-            repository = Repository(db)
-            self.logger.info(
-                "repository_created",
-                repository_type=type(repository).__name__
-            )
-            
             self.logger.debug("Getting JSON data")
             data = request.get_json()
             if not data:
@@ -66,88 +74,74 @@ class RouteEndpoint(Resource):
 
             self.logger.info("received_route_request", data=data)
 
-            # Parse origin and destination
+            # Parse origin and destination addresses
             self.logger.debug("Parsing locations")
             origin = Location(
+                address=data["origin"]["address"],
                 latitude=data["origin"]["latitude"],
-                longitude=data["origin"]["longitude"],
-                address=data["origin"]["address"]
+                longitude=data["origin"]["longitude"]
             )
             destination = Location(
+                address=data["destination"]["address"],
                 latitude=data["destination"]["latitude"],
-                longitude=data["destination"]["longitude"],
-                address=data["destination"]["address"]
+                longitude=data["destination"]["longitude"]
             )
 
             # Parse dates
             self.logger.debug("Parsing dates")
-            pickup_time = datetime.fromisoformat(data["pickup_time"].replace('Z', '+00:00'))
-            delivery_time = datetime.fromisoformat(data["delivery_time"].replace('Z', '+00:00'))
+            try:
+                # Parse dates and make them timezone-aware (using UTC)
+                pickup_time = datetime.fromisoformat(data["pickup_time"].replace('Z', '+00:00'))
+                if not pickup_time.tzinfo:
+                    pickup_time = pickup_time.replace(tzinfo=timezone.utc)
+                
+                delivery_time = datetime.fromisoformat(data["delivery_time"].replace('Z', '+00:00'))
+                if not delivery_time.tzinfo:
+                    delivery_time = delivery_time.replace(tzinfo=timezone.utc)
+                
+                # Basic validation before proceeding
+                if delivery_time <= pickup_time:
+                    return {"error": "Delivery time must be after pickup time"}, 400
+                
+                # Check if pickup time is within loading window (6 AM - 10 PM)
+                pickup_hour = pickup_time.hour
+                if pickup_hour < 6 or pickup_hour >= 22:
+                    return {
+                        "error": "Invalid pickup time",
+                        "details": "Pickup must be scheduled between 6 AM and 10 PM"
+                    }, 400
+                
+            except ValueError as e:
+                return {"error": f"Invalid date format: {str(e)}"}, 400
 
-            # Validate dates
-            if delivery_time <= pickup_time:
-                return {"error": "Delivery time must be after pickup time"}, 400
-
-            # Parse optional cargo
+            # Parse cargo if provided
             self.logger.debug("Parsing cargo")
             cargo = None
-            transport_type = None
             if "cargo" in data:
-                transport_type = TransportType(
-                    name=data['cargo']['type'],
-                    capacity=Capacity(),  # Using default capacity
-                    restrictions=[]  # No restrictions by default
-                )
-
                 cargo = Cargo(
-                    type=data['cargo']['type'],
-                    weight=float(data['cargo']['weight']),
-                    value=float(data['cargo']['value']),
-                    special_requirements=data['cargo'].get("special_requirements", [])
+                    type=data["cargo"]["type"],
+                    weight=data["cargo"]["weight"],
+                    value=data["cargo"]["value"],
+                    special_requirements=data["cargo"]["special_requirements"]
                 )
 
-            # Calculate route
-            self.logger.debug("Calculating route")
-            route = self.route_service.calculate_route(
-                origin=origin,
-                destination=destination,
-                pickup_time=pickup_time,
-                delivery_time=delivery_time,
-                cargo=cargo,
-                transport_type=transport_type
-            )
-            self.logger.info("route_calculated", route_id=str(route.id))
+            # Create route
+            self.logger.debug("Creating route")
+            try:
+                route = self.route_service.calculate_route(
+                    origin=origin,
+                    destination=destination,
+                    pickup_time=pickup_time,
+                    delivery_time=delivery_time,
+                    cargo=cargo
+                )
+                self.logger.info("route_calculated", route_id=str(route.id))
+                return route.to_dict(), 200
 
-            # Save route to database
-            self.logger.debug("Saving route")
-            saved_route = repository.save_route(route)
-            self.logger.info(
-                "route_saved",
-                route_id=str(saved_route.id),
-                origin=origin.address,
-                destination=destination.address
-            )
+            except RouteValidationException as e:
+                self.logger.error("route_validation_failed", errors=str(e.errors))
+                return {"error": "Route validation failed", "details": [str(err) for err in e.errors]}, 400
 
-            self.logger.debug("Calculating duration")
-            duration = get_time() - start_time
-            self.logger.info(
-                "metric_recorded",
-                metric_name="service_operation_time",
-                value=duration,
-                labels={
-                    "service": "RouteEndpoint",
-                    "operation": "post"
-                }
-            )
-
-            return saved_route.to_dict(), 200
-
-        except KeyError as e:
-            self.logger.error("missing_field_error", error=str(e))
-            return {"error": f"Missing required field: {str(e)}"}, 400
-        except ValueError as e:
-            self.logger.error("validation_error", error=str(e))
-            return {"error": str(e)}, 400
         except Exception as e:
             self.logger.error(
                 "route_calculation_failed",
@@ -156,26 +150,3 @@ class RouteEndpoint(Resource):
                 traceback=True
             )
             return {"error": str(e)}, 500
-        finally:
-            # Clean up database session
-            if db:
-                try:
-                    db.close()
-                    self.logger.info("db_session_closed")
-                except Exception as e:
-                    self.logger.error(
-                        "db_session_cleanup_failed",
-                        error=str(e),
-                        error_type=type(e).__name__
-                    )
-            self.logger.debug("Calculating final duration")
-            duration = get_time() - start_time
-            self.logger.info(
-                "metric_recorded",
-                metric_name="service_operation_time",
-                value=duration,
-                labels={
-                    "service": "RouteEndpoint",
-                    "operation": "post"
-                }
-            )

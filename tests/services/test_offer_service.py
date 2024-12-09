@@ -2,9 +2,9 @@ import pytest
 from unittest.mock import Mock, patch
 from datetime import datetime
 from uuid import UUID
-from backend.services.offer_service import OfferService
-from backend.services.cost_calculation_service import CostCalculationService
 from backend.domain.entities import Route, MainRoute, Location, Offer
+from backend.domain.services.offer import OfferService
+from backend.services.cost_calculation_service import CostCalculationService
 
 @pytest.fixture
 def mock_repository():

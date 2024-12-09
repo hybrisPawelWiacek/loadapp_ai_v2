@@ -4,7 +4,8 @@ import json
 from uuid import uuid4
 
 from backend.flask_app import app
-from backend.domain.services import RoutePlanningService, CostCalculationService, OfferService
+from backend.domain.services import RoutePlanningService, CostCalculationService
+from backend.domain.services.offer import OfferService
 
 @pytest.fixture
 def client(mock_db, mock_ai_service):
@@ -437,3 +438,230 @@ def test_list_historical_offers(client, mock_db):
             assert 'pickup_time' in route
             assert 'delivery_time' in route
             assert 'total_duration_hours' in route
+
+def test_list_offers_with_filters(client, mock_db):
+    """Test listing offers with various filter combinations."""
+    # Setup test data
+    test_offers = [
+        {
+            "id": str(uuid4()),
+            "created_at": datetime.now() - timedelta(days=5),
+            "status": "draft",
+            "currency": "EUR",
+            "price": 1000.0,
+            "margin": 15.0,
+            "route_id": str(uuid4()),
+            "costs": {
+                "base_cost": 800.0,
+                "fuel_cost": 100.0,
+                "driver_cost": 50.0,
+                "maintenance_cost": 30.0,
+                "additional_costs": 20.0
+            }
+        },
+        {
+            "id": str(uuid4()),
+            "created_at": datetime.now() - timedelta(days=3),
+            "status": "pending",
+            "currency": "EUR",
+            "price": 1500.0,
+            "margin": 20.0,
+            "route_id": str(uuid4()),
+            "costs": {
+                "base_cost": 1200.0,
+                "fuel_cost": 150.0,
+                "driver_cost": 75.0,
+                "maintenance_cost": 45.0,
+                "additional_costs": 30.0
+            }
+        },
+        {
+            "id": str(uuid4()),
+            "created_at": datetime.now() - timedelta(days=1),
+            "status": "accepted",
+            "currency": "USD",
+            "price": 2000.0,
+            "margin": 25.0,
+            "route_id": str(uuid4()),
+            "costs": {
+                "base_cost": 1500.0,
+                "fuel_cost": 200.0,
+                "driver_cost": 100.0,
+                "maintenance_cost": 60.0,
+                "additional_costs": 40.0
+            }
+        }
+    ]
+    
+    # Save test offers to mock database
+    for offer in test_offers:
+        mock_db.save_offer(offer)
+    
+    app.logger.info("Test data setup complete. Starting filter tests...")
+    
+    # Test 1: Filter by date range
+    response = client.get('/api/v1/offers', query_string={
+        'start_date': (datetime.now() - timedelta(days=4)).isoformat(),
+        'end_date': datetime.now().isoformat()
+    })
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert len(data['offers']) == 2  # Should only get the last 2 offers
+    app.logger.info("Date range filter test passed")
+    
+    # Test 2: Filter by price range
+    response = client.get('/api/v1/offers', query_string={
+        'min_price': 1200,
+        'max_price': 1800
+    })
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert len(data['offers']) == 1  # Should only get the middle offer
+    assert float(data['offers'][0]['basic_info']['final_price']) == 1500.0
+    app.logger.info("Price range filter test passed")
+    
+    # Test 3: Filter by status
+    response = client.get('/api/v1/offers', query_string={
+        'status': 'pending'
+    })
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert len(data['offers']) == 1
+    assert data['offers'][0]['basic_info']['status'] == 'pending'
+    app.logger.info("Status filter test passed")
+    
+    # Test 4: Filter by currency
+    response = client.get('/api/v1/offers', query_string={
+        'currency': 'USD'
+    })
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert len(data['offers']) == 1
+    assert data['offers'][0]['basic_info']['currency'] == 'USD'
+    app.logger.info("Currency filter test passed")
+    
+    # Test 5: Combined filters
+    response = client.get('/api/v1/offers', query_string={
+        'start_date': (datetime.now() - timedelta(days=4)).isoformat(),
+        'end_date': datetime.now().isoformat(),
+        'min_price': 1000,
+        'max_price': 2500,
+        'currency': 'EUR'
+    })
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert len(data['offers']) == 1  # Should only get the middle offer
+    assert data['offers'][0]['basic_info']['currency'] == 'EUR'
+    assert float(data['offers'][0]['basic_info']['final_price']) == 1500.0
+    app.logger.info("Combined filters test passed")
+    
+    # Test 6: Invalid filter values
+    response = client.get('/api/v1/offers', query_string={
+        'min_price': 'invalid',
+        'max_price': 1000
+    })
+    assert response.status_code == 400
+    data = json.loads(response.data)
+    assert 'error' in data
+    app.logger.info("Invalid filter validation test passed")
+    
+    # Test 7: No results case
+    response = client.get('/api/v1/offers', query_string={
+        'min_price': 5000,
+        'max_price': 6000
+    })
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert len(data['offers']) == 0
+    app.logger.info("No results test passed")
+
+def test_list_offers_with_settings(client, mock_db):
+    """Test listing offers with applied settings included."""
+    # Setup test data
+    test_settings = [
+        {
+            "id": str(uuid4()),
+            "type": "fuel",
+            "category": "variable",
+            "base_value": 1.5,
+            "multiplier": 1.0,
+            "currency": "EUR",
+            "is_enabled": True,
+            "description": "Fuel cost per kilometer"
+        },
+        {
+            "id": str(uuid4()),
+            "type": "driver",
+            "category": "fixed",
+            "base_value": 200.0,
+            "multiplier": 1.2,
+            "currency": "EUR",
+            "is_enabled": True,
+            "description": "Driver daily rate"
+        }
+    ]
+    
+    # Save settings to mock database
+    mock_db.save_cost_settings(test_settings)
+    
+    test_offer = {
+        "id": str(uuid4()),
+        "created_at": datetime.now(),
+        "status": "pending",
+        "currency": "EUR",
+        "price": 1500.0,
+        "margin": 20.0,
+        "route_id": str(uuid4()),
+        "costs": {
+            "base_cost": 1200.0,
+            "fuel_cost": 150.0,
+            "driver_cost": 75.0,
+            "maintenance_cost": 45.0,
+            "additional_costs": 30.0
+        },
+        "applied_settings": {
+            "fuel": test_settings[0],
+            "driver": test_settings[1]
+        }
+    }
+    
+    # Save test offer to mock database
+    mock_db.save_offer(test_offer)
+    
+    app.logger.info("Test data setup complete. Starting settings inclusion test...")
+    
+    # Test 1: Fetch without settings
+    response = client.get('/api/v1/offers')
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert len(data['offers']) == 1
+    assert 'applied_settings' not in data['offers'][0]
+    app.logger.info("Fetch without settings test passed")
+    
+    # Test 2: Fetch with settings included
+    response = client.get('/api/v1/offers', query_string={'include_settings': True})
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert len(data['offers']) == 1
+    assert 'applied_settings' in data['offers'][0]
+    
+    # Verify settings content
+    settings = data['offers'][0]['applied_settings']
+    assert 'fuel' in settings
+    assert 'driver' in settings
+    assert settings['fuel']['base_value'] == 1.5
+    assert settings['driver']['multiplier'] == 1.2
+    app.logger.info("Fetch with settings test passed")
+    
+    # Test 3: Verify settings format matches frontend expectations
+    settings = data['offers'][0]['applied_settings']
+    for setting_type, setting_data in settings.items():
+        assert all(key in setting_data for key in [
+            'base_value',
+            'multiplier',
+            'category',
+            'currency',
+            'description',
+            'is_enabled'
+        ])
+    app.logger.info("Settings format verification passed")

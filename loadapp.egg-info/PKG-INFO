@@ -1,7 +1,12 @@
 Metadata-Version: 2.1
 Name: loadapp
 Version: 0.1
+License-File: LICENSE
 Requires-Dist: flask
+Requires-Dist: flask-restful
+Requires-Dist: flask-cors
+Requires-Dist: sqlalchemy
+Requires-Dist: structlog
 Requires-Dist: streamlit
 Requires-Dist: requests
 Requires-Dist: plotly

@@ -1,4 +1,12 @@
 import streamlit as st
+
+# Configure the page
+st.set_page_config(
+    page_title="LoadApp.AI",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 import requests
 from datetime import datetime, timedelta
 import json
@@ -7,6 +15,7 @@ from components.route_input_form import render_route_input_form
 from components.route_display import render_route_display, render_route_map
 from components.advanced_cost_settings import render_cost_settings
 from pages.offer_review import render_offer_review_page
+import pandas as pd
 
 # Constants
 API_URL = "http://127.0.0.1:5000"
@@ -14,13 +23,6 @@ HEADERS = {
     'Content-Type': 'application/json',
     'Accept': 'application/json'
 }
-
-# Configure the page
-st.set_page_config(
-    page_title="LoadApp.AI",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # Session state initialization
 if 'current_route' not in st.session_state:
@@ -86,7 +88,7 @@ if page == "New Route":
             }
             
             route_response = requests.post(
-                f"{API_URL}/route",
+                f"{API_URL}/api/v1/routes",
                 json=request_data,
                 headers=HEADERS
             )
@@ -121,7 +123,7 @@ if page == "New Route":
             if st.button("Calculate Costs", use_container_width=True, key="calc_costs_btn"):
                 try:
                     cost_response = requests.post(
-                        f"{API_URL}/costs/{st.session_state.current_route['id']}",
+                        f"{API_URL}/api/v1/costs/{st.session_state.current_route['id']}",
                         json={"route_id": st.session_state.current_route['id']},
                         headers=HEADERS
                     )
@@ -138,72 +140,96 @@ if page == "New Route":
     # Show cost summary if costs exist
     if (hasattr(st.session_state, 'current_costs') and 
         st.session_state.current_costs is not None and 
-        'breakdown' in st.session_state.current_costs):
+        'cost_breakdown' in st.session_state.current_costs):
         
         st.markdown("---")
         st.subheader("Cost Breakdown")
         
         costs = st.session_state.current_costs
-        breakdown = costs['breakdown']
+        breakdown = costs['cost_breakdown']
         
         # Calculate aggregated costs
-        base_cost = sum(breakdown['fixed_costs'].values())
-        distance_cost = sum(
-            cost for category in ['empty_driving', 'main_route'] 
-            for cost_type, cost in breakdown[category].items() 
-            if cost_type in ['fuel', 'toll', 'maintenance']
-        )
-        time_cost = sum(
-            cost for category in ['empty_driving', 'main_route'] 
-            for cost_type, cost in breakdown[category].items() 
-            if cost_type == 'driver'
-        )
+        base_cost = sum(breakdown['base_costs'].values())
+        variable_cost = sum(breakdown['variable_costs'].values())
+        cargo_cost = sum(
+            sum(cargo_costs.values())
+            for cargo_costs in breakdown['cargo_specific_costs'].values()
+        ) if breakdown.get('cargo_specific_costs') else 0
         
         # Display main cost components
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Base Cost", f"€{base_cost:.2f}")
         with col2:
-            st.metric("Distance Cost", f"€{distance_cost:.2f}")
+            st.metric("Variable Cost", f"€{variable_cost:.2f}")
         with col3:
-            st.metric("Time Cost", f"€{time_cost:.2f}")
+            st.metric("Cargo Cost", f"€{cargo_cost:.2f}")
         with col4:
             st.metric("Total Cost", f"€{costs['total_cost']:.2f}")
         
         # Show detailed breakdown in expander
         with st.expander("Detailed Cost Breakdown"):
-            # Empty driving costs
-            st.subheader("Empty Driving Costs")
+            # Base costs
+            st.subheader("Base Costs")
             col1, col2, col3, col4 = st.columns(4)
-            for i, (cost_type, amount) in enumerate(breakdown['empty_driving'].items()):
+            for i, (cost_type, amount) in enumerate(breakdown['base_costs'].items()):
                 with eval(f"col{(i % 4) + 1}"):
                     st.metric(f"{cost_type.replace('_', ' ').title()}", f"€{amount:.2f}")
             
-            # Main route costs
-            st.subheader("Main Route Costs")
+            # Variable costs
+            st.subheader("Variable Costs")
             col1, col2, col3, col4 = st.columns(4)
-            for i, (cost_type, amount) in enumerate(
-                (item for item in breakdown['main_route'].items() if not isinstance(item[1], dict))
-            ):
+            for i, (cost_type, amount) in enumerate(breakdown['variable_costs'].items()):
                 with eval(f"col{(i % 4) + 1}"):
                     st.metric(f"{cost_type.replace('_', ' ').title()}", f"€{amount:.2f}")
             
-            # Country-specific costs if present
-            if 'country_specific' in breakdown['main_route']:
-                st.subheader("Country-Specific Costs")
-                col1, col2, col3, col4 = st.columns(4)
-                for i, (country, amount) in enumerate(breakdown['main_route']['country_specific'].items()):
-                    with eval(f"col{(i % 4) + 1}"):
-                        st.metric(f"{country}", f"€{amount:.2f}")
-            
-            # Fixed costs
-            st.subheader("Fixed Costs")
-            col1, col2, col3, col4 = st.columns(4)
-            for i, (cost_type, amount) in enumerate(breakdown['fixed_costs'].items()):
-                with eval(f"col{(i % 4) + 1}"):
-                    st.metric(f"{cost_type.replace('_', ' ').title()}", f"€{amount:.2f}")
+            # Cargo-specific costs if present
+            if breakdown.get('cargo_specific_costs'):
+                st.subheader("Cargo-Specific Costs")
+                for cargo_id, cargo_costs in breakdown['cargo_specific_costs'].items():
+                    st.markdown(f"**Cargo ID:** {cargo_id}")
+                    col1, col2, col3, col4 = st.columns(4)
+                    for i, (cost_type, amount) in enumerate(cargo_costs.items()):
+                        with eval(f"col{(i % 4) + 1}"):
+                            st.metric(f"{cost_type.replace('_', ' ').title()}", f"€{amount:.2f}")
         
-        # Add margin input and generate offer button
+        # Show optimization insights if available
+        if costs.get('optimization_insights'):
+            with st.expander("💡 Cost Optimization Insights"):
+                insights = costs['optimization_insights']
+                
+                if insights.get('patterns'):
+                    st.subheader("Cost Patterns")
+                    for pattern in insights['patterns']:
+                        st.markdown(f"""
+                            **{pattern['type']}** (Confidence: {pattern['confidence']:.0%})
+                            - {pattern['description']}
+                            - Impact Score: {pattern['impact_score']:.1f}
+                            - Affected Components: {', '.join(pattern['affected_components'])}
+                            
+                            Recommendations:
+                            {''.join(['- ' + rec + '\\n' for rec in pattern['recommendations']])}
+                        """)
+                
+                if insights.get('suggestions'):
+                    st.subheader("Optimization Suggestions")
+                    for suggestion in insights['suggestions']:
+                        st.markdown(f"""
+                            **{suggestion['title']}**
+                            - {suggestion['description']}
+                            - Estimated Savings: €{suggestion['estimated_savings']:.2f}
+                            - Implementation: {suggestion['implementation_complexity']}
+                            - Priority: {suggestion['priority']}
+                            
+                            Prerequisites:
+                            {''.join(['- ' + prereq + '\\n' for prereq in suggestion['prerequisites']])}
+                            
+                            Risks:
+                            {''.join(['- ' + risk + '\\n' for risk in suggestion['risks']])}
+                        """)
+        
+        # Generate Offer
+        st.markdown("---")
         st.markdown("### Generate Offer")
         st.session_state.margin = st.slider("Profit Margin (%)", 
                                           min_value=5, 
@@ -215,7 +241,7 @@ if page == "New Route":
             with st.spinner("Generating your offer... Did you know? AI-powered route optimization can reduce empty driving by up to 20%!"):
                 try:
                     offer_response = requests.post(
-                        f"{API_URL}/offer",
+                        f"{API_URL}/api/v1/offers",
                         json={
                             "route_id": st.session_state.current_route['id'],
                             "margin": float(st.session_state.margin)
@@ -226,34 +252,68 @@ if page == "New Route":
                     if offer_response.status_code in [200, 201]:
                         st.session_state.current_offer = offer_response.json()
                         st.session_state.step = 'offer_summary'
+                        
+                        # Display Offer Summary immediately after generation
+                        st.markdown("---")
+                        st.markdown("### 📋 Offer Summary")
+                        offer_col1, offer_col2, offer_col3 = st.columns(3)
+                        
+                        with offer_col1:
+                            st.metric("Base Cost", f"€{st.session_state.current_costs['total_cost']:.2f}")
+                        with offer_col2:
+                            st.metric("Margin", f"{st.session_state.margin}%")
+                        with offer_col3:
+                            final_price = st.session_state.current_costs['total_cost'] * (1 + st.session_state.margin/100)
+                            st.metric("Final Price", f"€{final_price:.2f}")
+                        
+                        # Display fun fact
+                        if 'fun_fact' in st.session_state.current_offer:
+                            st.info(f"🎯 Fun Fact: {st.session_state.current_offer['fun_fact']}")
+                        else:
+                            st.info("🎯 Fun Fact: Modern AI-powered logistics systems can reduce CO2 emissions by optimizing routes and reducing empty runs!")
+                        
+                        # Display feedback section only after offer is generated
+                        st.markdown("---")
+                        st.markdown("### 📝 Your Feedback")
+                        st.markdown("Help us improve! Share your experience with our service.")
+                        
+                        col1, col2 = st.columns([1, 2])
+                        with col1:
+                            rating = st.select_slider(
+                                "Rate your experience",
+                                options=[1, 2, 3, 4, 5],
+                                value=5,
+                                format_func=lambda x: "⭐" * x
+                            )
+                        
+                        comment = st.text_area("Additional comments (optional)", max_chars=500)
+                        
+                        def submit_feedback(rating, comment):
+                            """Submit user feedback to the backend."""
+                            try:
+                                response = requests.post(
+                                    f"{API_URL}/api/v1/feedback",
+                                    json={
+                                        "rating": rating,
+                                        "comment": comment,
+                                        "timestamp": datetime.now().isoformat(),
+                                        "session_id": str(uuid.uuid4())
+                                    }
+                                )
+                                return response.status_code == 200
+                            except Exception as e:
+                                st.error(f"Failed to submit feedback: {str(e)}")
+                                return False
+                        
+                        if st.button("Submit Feedback", type="primary"):
+                            if submit_feedback(rating, comment):
+                                st.success("Thank you for your feedback! We appreciate your input.")
+                            else:
+                                st.error("Unable to submit feedback. Please try again later.")
                     else:
                         st.error("Failed to generate offer. Please try again.")
                 except Exception as e:
                     st.error(f"An error occurred: {str(e)}")
-    
-    # Always show offer summary if it exists and has valid data
-    if (hasattr(st.session_state, 'current_offer') and 
-        st.session_state.current_offer is not None and 
-        hasattr(st.session_state, 'current_costs') and 
-        st.session_state.current_costs is not None):
-        
-        st.markdown("---")
-        st.markdown("### 📋 Offer Summary")
-        offer_col1, offer_col2, offer_col3 = st.columns(3)
-        
-        with offer_col1:
-            st.metric("Base Cost", f"€{st.session_state.current_costs['total_cost']:.2f}")
-        with offer_col2:
-            st.metric("Margin", f"{st.session_state.margin}%")
-        with offer_col3:
-            final_price = st.session_state.current_costs['total_cost'] * (1 + st.session_state.margin/100)
-            st.metric("Final Price", f"€{final_price:.2f}")
-        
-        # Display fun fact
-        if 'fun_fact' in st.session_state.current_offer:
-            st.info(f"🎯 Fun Fact: {st.session_state.current_offer['fun_fact']}")
-        else:
-            st.info("🎯 Fun Fact: Modern AI-powered logistics systems can reduce CO2 emissions by optimizing routes and reducing empty runs!")
 
 elif page == "Cost Settings":
     render_cost_settings()

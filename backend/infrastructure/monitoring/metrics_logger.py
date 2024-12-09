@@ -7,7 +7,6 @@ import pytz
 from typing import Dict, List, Optional, Union, Any
 import asyncio
 import threading
-import structlog
 from collections import defaultdict
 import numpy as np
 from sqlalchemy import func, and_
@@ -16,163 +15,141 @@ from sqlalchemy.orm import Session
 from ..database.models import MetricLog, MetricAggregate, AlertRule, AlertEvent
 from ..database.config import SessionLocal
 from .performance_metrics import PerformanceMetrics, MetricPoint, MetricSeries
+from ..logging import logger
 
-logger = structlog.get_logger(__name__)
-
-class MetricsBuffer:
-    """Thread-safe buffer for storing metrics before batch persistence."""
-    def __init__(self, max_size: int = 1000):
-        self.max_size = max_size
-        self._buffer: List[Dict[str, Any]] = []
-        self._lock = threading.Lock()
-    
-    def add(self, metric: Dict[str, Any]) -> bool:
-        """Add a metric to the buffer. Returns True if buffer is full."""
-        with self._lock:
-            self._buffer.append(metric)
-            return len(self._buffer) >= self.max_size
-    
-    def get_and_clear(self) -> List[Dict[str, Any]]:
-        """Get all metrics from the buffer and clear it."""
-        with self._lock:
-            metrics = self._buffer.copy()
-            self._buffer.clear()
-            return metrics
+# Get a logger instance with metrics context
+logger = logger.bind(
+    component="metrics_logger",
+    service="monitoring"
+)
 
 class MetricsLogger:
-    """
-    Handles metric aggregation, persistence, and alerting.
-    Thread-safe singleton that integrates with PerformanceMetrics.
-    """
+    """Handles metric aggregation, persistence, and alerting.
+    Thread-safe singleton that integrates with PerformanceMetrics."""
+    
     _instance = None
     _lock = threading.Lock()
     
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialize()
-        return cls._instance
-    
-    def _initialize(self):
-        """Initialize the metrics logger."""
-        self.buffer = MetricsBuffer()
-        self.performance_metrics = PerformanceMetrics()
+    def __init__(self, flush_interval: int = 60):
+        self.metrics_buffer: List[Dict] = []
+        self.flush_interval = flush_interval
+        self.running = False
+        self.buffer_lock = threading.Lock()
         self._flush_task = None
-        self._aggregate_task = None
-        self._alert_task = None
         
-        # Initialize aggregation periods
-        self.aggregation_periods = {
-            "1min": timedelta(minutes=1),
-            "5min": timedelta(minutes=5),
-            "1hour": timedelta(hours=1),
-            "1day": timedelta(days=1)
-        }
+        # Get or create event loop
+        try:
+            self.loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+        
+        self.aggregation_periods = ["1h", "1d", "7d", "30d"]
+        
+        # Initialize logger with instance context
+        self.logger = logger.bind(
+            instance_id=id(self),
+            buffer_size=len(self.metrics_buffer)
+        )
+        self.logger.info("metrics_logger_initialized")
     
-    async def start(self):
+    def start(self):
         """Start background tasks for metrics processing."""
-        if self._flush_task is None:
-            self._flush_task = asyncio.create_task(self._periodic_flush())
-        if self._aggregate_task is None:
-            self._aggregate_task = asyncio.create_task(self._periodic_aggregate())
-        if self._alert_task is None:
-            self._alert_task = asyncio.create_task(self._check_alerts())
+        if not self.running:
+            self.running = True
+            if not self._flush_task or self._flush_task.done():
+                self._flush_task = self.loop.create_task(self._periodic_flush())
+            self._aggregate_task = self.loop.create_task(self._periodic_aggregate())
+            self._alert_task = self.loop.create_task(self._check_alerts())
+            self.logger.info("background_tasks_started")
     
-    async def stop(self):
+    def stop(self):
         """Stop background tasks and flush remaining metrics."""
-        if self._flush_task:
+        self.running = False
+        if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
-            self._flush_task = None
-        if self._aggregate_task:
+        if self._aggregate_task and not self._aggregate_task.done():
             self._aggregate_task.cancel()
-            self._aggregate_task = None
-        if self._alert_task:
+        if self._alert_task and not self._alert_task.done():
             self._alert_task.cancel()
-            self._alert_task = None
-        
-        # Flush remaining metrics
-        await self._flush_metrics()
+        self.flush()  # Final flush
+        self.logger.info("background_tasks_stopped")
     
-    def log_metric(self, name: str, value: float, labels: Optional[Dict[str, str]] = None):
+    def log_metric(self, name: str, value: float, labels: Optional[Dict[str, str]] = None, timestamp: Optional[datetime] = None):
         """Log a metric value with optional labels."""
+        if timestamp is None:
+            timestamp = datetime.utcnow()
+        
         metric = {
             "name": name,
             "value": value,
             "labels": labels or {},
-            "timestamp": datetime.now(pytz.UTC)
+            "timestamp": timestamp.isoformat()
         }
         
-        if self.buffer.add(metric):
-            asyncio.create_task(self._flush_metrics())
+        with self.buffer_lock:
+            self.metrics_buffer.append(metric)
+            self.logger.debug("metric_logged", 
+                           metric_name=name, 
+                           value=value, 
+                           labels=labels,
+                           buffer_size=len(self.metrics_buffer))
     
-    async def _periodic_flush(self, interval: int = 60):
+    async def _periodic_flush(self):
         """Periodically flush metrics to storage."""
-        while True:
-            try:
-                await asyncio.sleep(interval)
-                await self._flush_metrics()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error("periodic_flush_error", error=str(e))
+        while self.running:
+            await asyncio.sleep(self.flush_interval)
+            self.flush()
+            self.logger.info("metrics_flushed",
+                          count=len(self.metrics_buffer),
+                          first_timestamp=self.metrics_buffer[0]["timestamp"],
+                          last_timestamp=self.metrics_buffer[-1]["timestamp"])
     
-    async def _flush_metrics(self):
+    def flush(self):
         """Flush buffered metrics to the database."""
-        metrics = self.buffer.get_and_clear()
-        if not metrics:
-            return
-        
-        try:
-            db = SessionLocal()
+        with self.buffer_lock:
+            if not self.metrics_buffer:
+                return
+            
+            session = SessionLocal()
             try:
-                db_metrics = [
-                    MetricLog(
-                        name=m["name"],
-                        value=m["value"],
-                        labels=m["labels"],
-                        timestamp=m["timestamp"]
-                    )
-                    for m in metrics
-                ]
-                db.add_all(db_metrics)
-                db.commit()
+                metrics_to_flush = self.metrics_buffer[:]
+                self.metrics_buffer.clear()
                 
-                logger.info(
-                    "metrics_flushed",
-                    count=len(metrics)
-                )
+                for metric in metrics_to_flush:
+                    log_entry = MetricLog(
+                        name=metric["name"],
+                        value=metric["value"],
+                        labels=metric["labels"],
+                        timestamp=datetime.fromisoformat(metric["timestamp"])
+                    )
+                    session.add(log_entry)
+                
+                session.commit()
+            except Exception as e:
+                self.logger.error("flush_metrics_error",
+                               error=str(e),
+                               metrics_count=len(self.metrics_buffer))
+                session.rollback()
             finally:
-                db.close()
-        except Exception as e:
-            logger.error(
-                "metrics_flush_error",
-                error=str(e),
-                metric_count=len(metrics)
-            )
+                session.close()
     
     async def _periodic_aggregate(self, interval: int = 300):
         """Periodically aggregate metrics."""
-        while True:
-            try:
-                await asyncio.sleep(interval)
-                await self._aggregate_metrics()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error("periodic_aggregate_error", error=str(e))
+        while self.running:
+            await asyncio.sleep(interval)
+            await self._aggregate_metrics()
     
     async def _aggregate_metrics(self):
         """Aggregate metrics for different time periods."""
-        now = datetime.now(pytz.UTC)
-        db = SessionLocal()
+        now = datetime.utcnow()
+        session = SessionLocal()
         try:
-            for period_name, period_delta in self.aggregation_periods.items():
-                start_time = now - period_delta
+            for period_name in self.aggregation_periods:
+                start_time = now - timedelta(hours=int(period_name[:-1]))
                 
                 # Query raw metrics for the period
-                metrics = db.query(MetricLog).filter(
+                metrics = session.query(MetricLog).filter(
                     MetricLog.timestamp > start_time
                 ).all()
                 
@@ -200,38 +177,35 @@ class MetricsLogger:
                         p95=float(np.percentile(values_array, 95)),
                         labels=labels
                     )
-                    db.add(aggregate)
+                    session.add(aggregate)
             
-            db.commit()
-            logger.info("metrics_aggregated", period_count=len(self.aggregation_periods))
+            session.commit()
+            self.logger.info("metrics_aggregated", 
+                          period_count=len(self.aggregation_periods))
         except Exception as e:
-            logger.error("aggregate_metrics_error", error=str(e))
-            db.rollback()
+            self.logger.error("aggregate_metrics_error", 
+                           error=str(e))
+            session.rollback()
         finally:
-            db.close()
+            session.close()
     
     async def _check_alerts(self, interval: int = 60):
         """Periodically check alert conditions."""
-        while True:
-            try:
-                await asyncio.sleep(interval)
-                await self._evaluate_alerts()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error("check_alerts_error", error=str(e))
+        while self.running:
+            await asyncio.sleep(interval)
+            await self._evaluate_alerts()
     
     async def _evaluate_alerts(self, test_session: Session = None):
         """Evaluate all alert rules against recent metrics."""
-        db = test_session if test_session else SessionLocal()
+        session = test_session if test_session else SessionLocal()
         try:
             # Get active alert rules and keep them in the session
-            rules = list(db.query(AlertRule).filter_by(enabled=True).all())
+            rules = list(session.query(AlertRule).filter_by(enabled=True).all())
             
             for rule in rules:
                 # Get any existing unresolved alerts for this rule
                 existing_alert = (
-                    db.query(AlertEvent)
+                    session.query(AlertEvent)
                     .filter(
                         and_(
                             AlertEvent.rule_id == rule.id,
@@ -244,7 +218,7 @@ class MetricsLogger:
                 
                 # Get the most recent aggregate for the rule's period
                 aggregate = (
-                    db.query(MetricAggregate)
+                    session.query(MetricAggregate)
                     .filter(
                         and_(
                             MetricAggregate.name == rule.metric_name,
@@ -280,7 +254,7 @@ class MetricsLogger:
                 elif rule.condition == "eq":
                     triggered = abs(value - rule.threshold) < 0.0001
                 
-                logger.info(
+                self.logger.info(
                     "alert_evaluation",
                     rule_name=rule.name,
                     metric_name=rule.metric_name,
@@ -300,9 +274,9 @@ class MetricsLogger:
                         value=value,
                         message=f"{rule.name}: {rule.metric_name} is {rule.condition} {rule.threshold} (current value: {value})"
                     )
-                    db.add(alert)
-                    db.commit()  # Commit changes to create the alert
-                    logger.warning(
+                    session.add(alert)
+                    session.commit()  # Commit changes to create the alert
+                    self.logger.warning(
                         "alert_triggered",
                         rule_name=rule.name,
                         metric_name=rule.metric_name,
@@ -313,10 +287,10 @@ class MetricsLogger:
                     )
                 elif not triggered and existing_alert:
                     # Resolve existing alert only if not triggered
-                    existing_alert.resolved_at = datetime.now(pytz.UTC)
-                    db.add(existing_alert)  # Explicitly add the modified alert back to session
-                    db.commit()  # Commit changes to resolve the alert
-                    logger.info(
+                    existing_alert.resolved_at = datetime.utcnow()
+                    session.add(existing_alert)  # Explicitly add the modified alert back to session
+                    session.commit()  # Commit changes to resolve the alert
+                    self.logger.info(
                         "alert_resolved",
                         rule_name=rule.name,
                         metric_name=rule.metric_name,
@@ -327,12 +301,13 @@ class MetricsLogger:
                     )
             
         except Exception as e:
-            logger.error("evaluate_alerts_error", error=str(e))
-            db.rollback()
+            self.logger.error("evaluate_alerts_error", 
+                           error=str(e))
+            session.rollback()
             raise  # Re-raise the exception for testing
         finally:
             if not test_session:  # Only close if we created our own session
-                db.close()
+                session.close()
     
     def query_metrics(
         self,
@@ -343,10 +318,10 @@ class MetricsLogger:
         labels: Optional[Dict[str, str]] = None
     ) -> List[MetricAggregate]:
         """Query aggregated metrics for a specific period."""
-        db = SessionLocal()
+        session = SessionLocal()
         try:
             query = (
-                db.query(MetricAggregate)
+                session.query(MetricAggregate)
                 .filter(
                     and_(
                         MetricAggregate.name == metric_name,
@@ -366,7 +341,7 @@ class MetricsLogger:
             
             return query.order_by(MetricAggregate.start_time).all()
         finally:
-            db.close()
+            session.close()
     
     def create_alert_rule(
         self,
@@ -382,9 +357,9 @@ class MetricsLogger:
             raise ValueError("Invalid condition. Must be one of: gt, lt, eq")
         
         if period not in self.aggregation_periods:
-            raise ValueError(f"Invalid period. Must be one of: {', '.join(self.aggregation_periods.keys())}")
+            raise ValueError(f"Invalid period. Must be one of: {', '.join(self.aggregation_periods)}")
         
-        db = SessionLocal()
+        session = SessionLocal()
         try:
             rule = AlertRule(
                 name=name,
@@ -394,22 +369,26 @@ class MetricsLogger:
                 period=period,
                 labels_filter=labels_filter
             )
-            db.add(rule)
-            db.commit()
-            db.refresh(rule)
+            session.add(rule)
+            session.commit()
+            session.refresh(rule)
             return rule
         finally:
-            db.close()
+            session.close()
     
     def get_active_alerts(self) -> List[AlertEvent]:
         """Get all unresolved alert events."""
-        db = SessionLocal()
+        session = SessionLocal()
         try:
             return (
-                db.query(AlertEvent)
+                session.query(AlertEvent)
                 .filter(AlertEvent.resolved_at.is_(None))
                 .order_by(AlertEvent.triggered_at.desc())
                 .all()
             )
         finally:
-            db.close()
+            session.close()
+
+    def __del__(self):
+        """Ensure background tasks are stopped on cleanup."""
+        self.stop()
