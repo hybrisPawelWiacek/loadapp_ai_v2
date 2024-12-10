@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import and_
@@ -21,7 +21,7 @@ class CostSettingsRepository:
     def _to_entity(self, model: CostSettingModel) -> CostSettingEntity:
         """Convert database model to domain entity."""
         return CostSettingEntity(
-            id=UUID(model.id),
+            id=model.id,  # Keep as UUID
             name=model.name,
             type=model.type,
             category=model.category,
@@ -30,17 +30,13 @@ class CostSettingsRepository:
             currency=model.currency,
             is_enabled=model.is_enabled,
             description=model.description,
-            created_by=model.created_by if hasattr(model, 'created_by') else None,
-            created_at=model.created_at if hasattr(model, 'created_at') else None,
-            last_updated=model.last_updated if hasattr(model, 'last_updated') else None,
-            validation_rules=model.validation_rules if hasattr(model, 'validation_rules') else None,
-            historical_data=model.historical_data if hasattr(model, 'historical_data') else None
+            last_updated=model.last_updated
         )
 
     def _to_model(self, entity: CostSettingEntity) -> CostSettingModel:
         """Convert domain entity to database model."""
         return CostSettingModel(
-            id=str(entity.id),
+            id=entity.id,  # Keep as UUID
             name=entity.name,
             type=entity.type,
             category=entity.category,
@@ -49,18 +45,21 @@ class CostSettingsRepository:
             currency=entity.currency,
             is_enabled=entity.is_enabled,
             description=entity.description,
-            created_by=entity.created_by if hasattr(entity, 'created_by') else None,
-            created_at=entity.created_at if hasattr(entity, 'created_at') else None,
-            last_updated=entity.last_updated if hasattr(entity, 'last_updated') else None,
-            validation_rules=entity.validation_rules if hasattr(entity, 'validation_rules') else None,
-            historical_data=entity.historical_data if hasattr(entity, 'historical_data') else None
+            last_updated=entity.last_updated
         )
 
     def get_all_cost_settings(self) -> List[CostSettingEntity]:
         """Retrieve all cost settings from the database."""
         try:
-            models = self.session.query(CostSettingModel).all()
-            return [self._to_entity(model) for model in models]
+            # First check if we have any settings
+            settings = self.session.query(CostSettingModel).all()
+            
+            # If no settings exist, initialize default ones
+            if not settings:
+                self.initialize_default_settings()
+                settings = self.session.query(CostSettingModel).all()
+            
+            return [self._to_entity(model) for model in settings]
         except SQLAlchemyError as e:
             self.logger.error("failed_to_get_all_settings", error=str(e))
             raise
@@ -79,7 +78,7 @@ class CostSettingsRepository:
         try:
             with self.session.begin_nested():
                 for setting in settings:
-                    model = self.session.query(CostSettingModel).get(str(setting.id))
+                    model = self.session.query(CostSettingModel).get(setting.id)  # Keep as UUID
                     if model is None:
                         self.logger.warning("setting_not_found", setting_id=str(setting.id))
                         continue
@@ -227,52 +226,49 @@ class CostSettingsRepository:
     def initialize_default_settings(self) -> None:
         """Initialize default cost settings if none exist."""
         try:
-            # Check if any settings exist
-            existing_settings = self.session.query(CostSettingModel).first()
-            if existing_settings is None:
-                # Create default settings
-                default_settings = [
-                    CostSettingModel(
-                        id=str(UUID(int=1)),
-                        name="Base Distance Cost",
-                        type="distance",
-                        category="transport",
-                        value=1.5,  # €/km
-                        multiplier=1.0,
-                        currency="EUR",
-                        is_enabled=True,
-                        description="Base cost per kilometer traveled"
-                    ),
-                    CostSettingModel(
-                        id=str(UUID(int=2)),
-                        name="Base Time Cost",
-                        type="time",
-                        category="transport",
-                        value=50.0,  # €/hour
-                        multiplier=1.0,
-                        currency="EUR",
-                        is_enabled=True,
-                        description="Base cost per hour of transport"
-                    ),
-                    CostSettingModel(
-                        id=str(UUID(int=3)),
-                        name="Toll Cost",
-                        type="toll",
-                        category="transport",
-                        value=1.0,
-                        multiplier=1.0,
-                        currency="EUR",
-                        is_enabled=True,
-                        description="Toll costs for transport routes"
-                    )
-                ]
-                
-                # Add all default settings
-                for setting in default_settings:
-                    self.session.add(setting)
-                self.session.commit()
-                
-                self.logger.info("default_settings_initialized", count=len(default_settings))
+            # Create default settings
+            default_settings = [
+                CostSettingModel(
+                    id=uuid4(),
+                    name="Base Distance Cost",
+                    type="distance",
+                    category="transport",
+                    value=1.5,  # €/km
+                    multiplier=1.0,
+                    currency="EUR",
+                    is_enabled=True,
+                    description="Base cost per kilometer traveled"
+                ),
+                CostSettingModel(
+                    id=uuid4(),
+                    name="Base Time Cost",
+                    type="time",
+                    category="transport",
+                    value=50.0,  # €/hour
+                    multiplier=1.0,
+                    currency="EUR",
+                    is_enabled=True,
+                    description="Base cost per hour of transport"
+                ),
+                CostSettingModel(
+                    id=uuid4(),
+                    name="Toll Cost",
+                    type="toll",
+                    category="transport",
+                    value=1.0,
+                    multiplier=1.0,
+                    currency="EUR",
+                    is_enabled=True,
+                    description="Toll costs for transport routes"
+                )
+            ]
+            
+            # Add all default settings
+            for setting in default_settings:
+                self.session.add(setting)
+            self.session.commit()
+            
+            self.logger.info("default_settings_initialized", count=len(default_settings))
         except SQLAlchemyError as e:
             self.logger.error("failed_to_initialize_default_settings", error=str(e))
             self.session.rollback()

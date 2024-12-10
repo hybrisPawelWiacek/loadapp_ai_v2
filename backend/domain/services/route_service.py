@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from uuid import UUID
 import structlog
 
-from ...domain.entities.route import Route, EmptyDriving, MainRoute, CountrySegment
+from ...domain.entities.route import Route, EmptyDriving, MainRoute, CountrySegment, TimelineEvent
 from ...domain.entities.cost_setting import CostSetting
 from ...domain.entities.location import Location
 from ...domain.entities.cargo import Cargo, TransportType
@@ -69,11 +69,21 @@ class RouteService:
             RouteValidationException: If cost settings or timeline validation fails
         """
         try:
+            self.logger.debug(
+                "creating_route",
+                route_id=route.id,
+                route_id_type=type(route.id).__name__,
+                cost_settings_count=len(cost_settings),
+                cost_settings_ids=[str(s.id) for s in cost_settings],
+                cost_settings_types=[s.type for s in cost_settings]
+            )
+            
             # Validate cost settings
             validation_errors = self.validate_route_cost_settings(cost_settings)
             
             # Validate timeline if requested
             if validate_timeline:
+                self.logger.debug("validating_timeline", route_id=route.id)
                 timeline_errors = self.validate_route_timeline(route)
                 validation_errors.extend(timeline_errors)
             
@@ -81,6 +91,11 @@ class RouteService:
                 raise RouteValidationException(validation_errors)
 
             # Calculate initial costs
+            self.logger.debug(
+                "calculating_costs",
+                route_id=route.id,
+                cost_settings_count=len(cost_settings)
+            )
             cost_calculation = self.cost_calculation_service.calculate_route_cost(route)
             
             # Update route with cost information
@@ -107,9 +122,9 @@ class RouteService:
             )
 
             # Save route to database
-            self.logger.debug("Saving route to database", route_id=route.id)
+            self.logger.debug("saving_route_to_database", route_id=route.id)
             saved_route = self.repository.create(route)
-            self.logger.info("Route saved successfully", route_id=route.id)
+            self.logger.info("route_saved_successfully", route_id=route.id)
             
             return saved_route
 
@@ -293,29 +308,31 @@ class RouteService:
             return 0
         return (total_hours - 1) // self.REQUIRED_REST_AFTER_HOURS
 
-    def _calculate_rest_stops(self, route: Route) -> List[Dict]:
+    def _calculate_rest_stops(self, route: Route) -> List[TimelineEvent]:
         """Calculate rest stop timeline events."""
         timeline = []
-        
+
         # Start event
-        timeline.append({
-            "type": "start",
-            "time": route.pickup_time - timedelta(hours=route.empty_driving.duration_hours),
-            "location": route.origin,
-            "duration_minutes": 0,
-            "description": "Start of route",
-            "is_required": True
-        })
+        timeline.append(TimelineEvent(
+            type="start",
+            time=route.pickup_time - timedelta(hours=route.empty_driving.duration_hours),
+            planned_time=route.pickup_time - timedelta(hours=route.empty_driving.duration_hours),
+            location=route.origin,
+            duration_minutes=0,
+            description="Start of route",
+            is_required=True
+        ))
         
         # Pickup event with loading duration
-        timeline.append({
-            "type": "pickup",
-            "time": route.pickup_time,
-            "location": route.origin,
-            "duration_minutes": 30,  # 30 minutes for loading
-            "description": "Loading cargo",
-            "is_required": True
-        })
+        timeline.append(TimelineEvent(
+            type="pickup",
+            time=route.pickup_time,
+            planned_time=route.pickup_time,
+            location=route.origin,
+            duration_minutes=30,  # 30 minutes for loading
+            description="Loading cargo",
+            is_required=True
+        ))
         
         # Calculate rest stops
         current_time = route.pickup_time + timedelta(minutes=30)  # After loading
@@ -331,37 +348,41 @@ class RouteService:
                 address=f"Rest Area {len(timeline)}"
             )
             
-            timeline.append({
-                "type": "rest",
-                "time": rest_time,
-                "location": rest_location,
-                "duration_minutes": int(self.MIN_REST_DURATION_HOURS * 60),
-                "description": "Required rest period",
-                "is_required": False
-            })
+            timeline.append(TimelineEvent(
+                type="rest",
+                time=rest_time,
+                planned_time=rest_time,
+                location=rest_location,
+                duration_minutes=int(self.MIN_REST_DURATION_HOURS * 60),
+                description="Required rest period",
+                is_required=False
+            ))
             
             current_time = rest_time + timedelta(hours=self.MIN_REST_DURATION_HOURS)
             remaining_drive_time -= self.REQUIRED_REST_AFTER_HOURS
         
         # Delivery event with unloading duration
-        timeline.append({
-            "type": "delivery",
-            "time": route.delivery_time - timedelta(minutes=30),  # Account for unloading time
-            "location": route.destination,
-            "duration_minutes": 30,  # 30 minutes for unloading
-            "description": "Unloading cargo",
-            "is_required": True
-        })
+        delivery_start_time = route.delivery_time - timedelta(minutes=30)  # Account for unloading time
+        timeline.append(TimelineEvent(
+            type="delivery",
+            time=delivery_start_time,
+            planned_time=delivery_start_time,
+            location=route.destination,
+            duration_minutes=30,  # 30 minutes for unloading
+            description="Unloading cargo",
+            is_required=True
+        ))
         
         # End event
-        timeline.append({
-            "type": "end",
-            "time": route.delivery_time,
-            "location": route.destination,
-            "duration_minutes": 0,
-            "description": "End of route",
-            "is_required": True
-        })
+        timeline.append(TimelineEvent(
+            type="end",
+            time=route.delivery_time,
+            planned_time=route.delivery_time,
+            location=route.destination,
+            duration_minutes=0,
+            description="End of route",
+            is_required=True
+        ))
         
         return timeline
 

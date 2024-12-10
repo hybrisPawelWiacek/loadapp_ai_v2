@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 import structlog
 import random  # For mock data generation
 
@@ -31,6 +31,12 @@ class OptimizationSuggestion:
     affected_settings: List[str]
     prerequisites: List[str]
     risks: List[str]
+    
+    def __post_init__(self):
+        """Ensure proper type conversion after initialization."""
+        # Ensure suggestion_id is a UUID object
+        if isinstance(self.suggestion_id, str):
+            self.suggestion_id = UUID(self.suggestion_id)
 
 class CostOptimizationService:
     """Service for analyzing cost patterns and suggesting optimizations."""
@@ -140,7 +146,7 @@ class CostOptimizationService:
             # Mock optimization suggestions
             suggestions = [
                 OptimizationSuggestion(
-                    suggestion_id=UUID('a8b7c6d5-e4f3-4a2b-1c0d-9e8f7a6b5c4d'),
+                    suggestion_id=uuid4(),
                     title="Optimize Fuel Consumption",
                     description="Implement fuel efficiency measures based on route analysis",
                     estimated_savings=1500.0,
@@ -151,7 +157,7 @@ class CostOptimizationService:
                     risks=["Initial implementation costs", "Driver adaptation period"]
                 ),
                 OptimizationSuggestion(
-                    suggestion_id=UUID('b9c8d7e6-f5g4-5b3a-2d1e-0f9g8h7i6j5'),
+                    suggestion_id=uuid4(),
                     title="Route Optimization",
                     description="Adjust route planning to minimize elevation changes",
                     estimated_savings=800.0,
@@ -162,7 +168,7 @@ class CostOptimizationService:
                     risks=["Potential increase in distance"]
                 ),
                 OptimizationSuggestion(
-                    suggestion_id=UUID('c0d9e8f7-g6h5-6c4b-3e2f-1g0h9i8j7k6'),
+                    suggestion_id=uuid4(),
                     title="Cargo Consolidation",
                     description="Optimize cargo loading patterns for refrigerated goods",
                     estimated_savings=1200.0,

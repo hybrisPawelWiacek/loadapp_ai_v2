@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Optional
 from uuid import UUID, uuid4
+from dateutil import tz
 
 @dataclass
 class CostSetting:
@@ -28,6 +29,18 @@ class CostSetting:
     # Complex data with defaults
     validation_rules: Dict = field(default_factory=dict)  # Rules for validating the setting
     historical_data: Dict = field(default_factory=dict)  # Historical values and changes
+
+    def __post_init__(self):
+        """Ensure proper type conversion after initialization."""
+        # Ensure id is a UUID object
+        if isinstance(self.id, str):
+            self.id = UUID(self.id)
+            
+        # Ensure datetimes are timezone-aware
+        if self.created_at and not self.created_at.tzinfo:
+            self.created_at = self.created_at.replace(tzinfo=tz.tzutc())
+        if self.last_updated and not self.last_updated.tzinfo:
+            self.last_updated = self.last_updated.replace(tzinfo=tz.tzutc())
 
     def apply_multiplier(self) -> float:
         """Calculate the effective cost value with multiplier applied."""

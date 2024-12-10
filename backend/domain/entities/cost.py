@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from uuid import UUID
-from typing import Dict
+from typing import Dict, Any
 
 @dataclass
 class CostItem:
@@ -12,6 +12,38 @@ class CostItem:
     multiplier: float = 1.0
     currency: str = "EUR"
     is_enabled: bool = True
+
+    def __post_init__(self):
+        # Ensure id is a UUID object
+        if isinstance(self.id, str):
+            self.id = UUID(self.id)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert CostItem to dictionary."""
+        return {
+            'id': str(self.id),
+            'type': self.type,
+            'category': self.category,
+            'base_value': self.base_value,
+            'description': self.description,
+            'multiplier': self.multiplier,
+            'currency': self.currency,
+            'is_enabled': self.is_enabled
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'CostItem':
+        """Create a CostItem from dictionary."""
+        return cls(
+            id=UUID(data['id']) if isinstance(data['id'], str) else data['id'],
+            type=data['type'],
+            category=data['category'],
+            base_value=data['base_value'],
+            description=data['description'],
+            multiplier=data.get('multiplier', 1.0),
+            currency=data.get('currency', 'EUR'),
+            is_enabled=data.get('is_enabled', True)
+        )
 
 @dataclass
 class Cost:

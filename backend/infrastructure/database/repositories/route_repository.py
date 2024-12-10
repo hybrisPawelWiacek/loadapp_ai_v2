@@ -106,7 +106,7 @@ class RouteRepository(BaseRepository):
                 timeline_events.append(event)
 
         return Route(
-            id=UUID(model.id),
+            id=UUID(model.id) if isinstance(model.id, str) else model.id,
             origin=origin,
             destination=destination,
             pickup_time=model.pickup_time,
@@ -140,7 +140,7 @@ class RouteRepository(BaseRepository):
             # Map the route fields to the model fields
             self.logger.debug("Mapping fields to model")
             model_dict = {
-                'id': str(route_dict.get('id')),
+                'id': route_dict.get('id'),  # Keep as UUID
                 'origin_address': route_dict.get('origin', {}).get('address'),
                 'origin_latitude': float(route_dict.get('origin', {}).get('latitude', 0.0)),
                 'origin_longitude': float(route_dict.get('origin', {}).get('longitude', 0.0)),

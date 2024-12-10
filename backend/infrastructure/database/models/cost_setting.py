@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Boolean
+from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 from uuid import uuid4
 
@@ -7,7 +8,7 @@ from backend.infrastructure.database.session import Base
 class CostSettingModel(Base):
     __tablename__ = "cost_settings"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     name = Column(String, nullable=False)
     type = Column(String, nullable=False)  # Type of cost (e.g., fuel, maintenance)
     category = Column(String, nullable=False)  # Category for grouping

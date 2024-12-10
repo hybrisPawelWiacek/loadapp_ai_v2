@@ -23,6 +23,12 @@ class TransportType:
     restrictions: List[str] = field(default_factory=list)
     id: UUID = field(default_factory=uuid4)
     
+    def __post_init__(self):
+        """Ensure proper type conversion after initialization."""
+        # Ensure id is a UUID object
+        if isinstance(self.id, str):
+            self.id = UUID(self.id)
+    
     def to_dict(self) -> dict:
         """Convert transport type to dictionary for JSON serialization."""
         return {
@@ -39,6 +45,12 @@ class Cargo:
     value: float
     special_requirements: List[str] = field(default_factory=list)
     id: UUID = field(default_factory=uuid4)
+    
+    def __post_init__(self):
+        """Ensure proper type conversion after initialization."""
+        # Ensure id is a UUID object
+        if isinstance(self.id, str):
+            self.id = UUID(self.id)
     
     def to_dict(self) -> dict:
         """Convert cargo to dictionary for JSON serialization."""

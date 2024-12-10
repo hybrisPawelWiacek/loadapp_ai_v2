@@ -133,6 +133,21 @@ class Offer:
     _validation_results: List[ValidationResult] = field(default_factory=list)
     _version_history: List[Dict] = field(default_factory=list)
 
+    def __post_init__(self):
+        # Ensure UUIDs are properly converted
+        if isinstance(self.id, str):
+            self.id = UUID(self.id)
+        if isinstance(self.route_id, str):
+            self.route_id = UUID(self.route_id)
+        if isinstance(self.client_id, str) and self.client_id:
+            self.client_id = UUID(self.client_id)
+        
+        # Initialize timestamps if not set
+        if not self.created_at:
+            self.created_at = datetime.now(UTC)
+        if not self.updated_at:
+            self.updated_at = datetime.now(UTC)
+
     def validate(self) -> List[ValidationResult]:
         """Comprehensive validation of the offer."""
         results = []
@@ -241,31 +256,31 @@ class Offer:
             return True, ""
         return False, f"Invalid status transition from {self.status.value} to {new_status.value}"
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> Dict[str, Any]:
         """Convert offer to a dictionary for JSON serialization."""
         return {
-            "id": str(self.id),
-            "route_id": str(self.route_id),
-            "cost_breakdown": self.cost_breakdown.to_dict(),
-            "margin_percentage": self.margin_percentage,
-            "final_price": self.final_price,
-            "currency": self.currency.value,
-            "status": self.status.value,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
-            "version": self.version,
-            "created_by": self.created_by,
-            "updated_by": self.updated_by,
-            "client_id": str(self.client_id) if self.client_id else None,
-            "client_name": self.client_name,
-            "client_contact": self.client_contact,
-            "geographic_restrictions": self.geographic_restrictions.to_dict() if self.geographic_restrictions else None,
-            "ai_insights": self.ai_insights,
-            "applied_settings": self.applied_settings,
-            "business_rules_validation": self.business_rules_validation,
-            "metadata": self.metadata,
-            "metrics": self._metrics.__dict__ if self._metrics else None,
-            "version_history": self._version_history
+            'id': str(self.id),
+            'route_id': str(self.route_id),
+            'cost_breakdown': self.cost_breakdown.to_dict(),
+            'margin_percentage': self.margin_percentage,
+            'final_price': self.final_price,
+            'currency': self.currency.value,
+            'status': self.status.value,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
+            'version': self.version,
+            'created_by': self.created_by,
+            'updated_by': self.updated_by,
+            'client_id': str(self.client_id) if self.client_id else None,
+            'client_name': self.client_name,
+            'client_contact': self.client_contact,
+            'geographic_restrictions': self.geographic_restrictions.to_dict() if self.geographic_restrictions else None,
+            'ai_insights': self.ai_insights,
+            'applied_settings': self.applied_settings,
+            'business_rules_validation': self.business_rules_validation,
+            'metadata': self.metadata,
+            'metrics': self._metrics.__dict__ if self._metrics else None,
+            'version_history': self._version_history
         }
 
     @classmethod

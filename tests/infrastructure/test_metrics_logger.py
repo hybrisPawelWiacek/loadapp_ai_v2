@@ -23,7 +23,7 @@ from backend.infrastructure.database.models import Base
 def db_session():
     """Create a fresh database for each test."""
     engine = create_engine(
-        "sqlite:///:memory:",
+        "postgresql://postgres@localhost:5432/loadapp_test",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool
     )

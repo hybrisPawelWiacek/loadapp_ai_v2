@@ -125,8 +125,9 @@ def mock_db():
     from sqlalchemy.orm import sessionmaker
     from backend.infrastructure.database.db_setup import Base
     
-    # Use an in-memory SQLite database for testing
-    SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+    """Create a test database."""
+    # Use an in-memory PostgreSQL database for testing
+    SQLALCHEMY_DATABASE_URL = "postgresql://postgres@localhost:5432/loadapp_test"
     engine = create_engine(SQLALCHEMY_DATABASE_URL)
     
     # Create all tables in the test database

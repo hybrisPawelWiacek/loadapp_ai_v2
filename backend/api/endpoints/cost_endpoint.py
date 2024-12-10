@@ -84,43 +84,57 @@ class CostEndpoint(Resource):
         )
         self.logger.info("cost_endpoint_initialized")
 
-    def get(self, path: str = None):
+    def get(self, cost_id: str = None):
         """Get cost settings or specific cost details."""
         logger.info("cost_endpoint_get_called",
                    endpoint="cost_endpoint",
                    method="GET",
-                   path=path)
+                   cost_id=cost_id)
         
         try:
-            if path is None or path == 'settings':
+            # Check if this is the settings endpoint
+            if request.path.endswith('/settings'):
                 # Return all cost settings
-                settings = self.cost_settings_repository.get_all()
+                settings = self.cost_settings_repository.get_all_cost_settings()
+                # Convert entities to dict with correct field names
+                settings_data = []
+                for setting in settings:
+                    setting_dict = setting.to_dict()
+                    # Ensure we have the expected field names
+                    setting_dict['base_value'] = setting_dict.pop('value', 0.0)
+                    setting_dict['type'] = setting_dict.get('type', 'unknown')
+                    setting_dict['category'] = setting_dict.get('category', 'variable')
+                    settings_data.append(setting_dict)
                 return {
-                    "settings": [setting.to_dict() for setting in settings],
-                    "total": len(settings)
+                    "settings": settings_data,
+                    "total": len(settings_data)
                 }
-            elif path == 'defaults':
-                defaults = self.cost_settings_service.get_default_settings()
-                return jsonify([setting.to_dict() for setting in defaults])
-                
-            elif path == 'analysis':
-                # Get current settings for analysis
-                settings = self.cost_settings_service.get_all_settings()
-                analysis = self.cost_optimization_service.analyze_cost_patterns(settings)
-                return jsonify(analysis)
-                
-            elif path == 'optimization':
-                settings = self.cost_settings_service.get_all_settings()
-                suggestions = self.cost_optimization_service.suggest_optimizations(settings)
-                return jsonify(suggestions)
-                
+            elif cost_id:
+                # Get specific cost setting
+                setting = self.cost_settings_repository.get_by_id(cost_id)
+                if not setting:
+                    return {"error": f"Cost setting with ID {cost_id} not found"}, 404
+                setting_dict = setting.to_dict()
+                setting_dict['base_value'] = setting_dict.pop('value', 0.0)
+                return setting_dict
             else:
-                self.logger.error("invalid_path", path=path)
-                return {"error": "Invalid endpoint path"}, 404
+                # Return all enabled settings by default
+                settings = self.cost_settings_repository.get_enabled_cost_settings()
+                settings_data = []
+                for setting in settings:
+                    setting_dict = setting.to_dict()
+                    setting_dict['base_value'] = setting_dict.pop('value', 0.0)
+                    setting_dict['type'] = setting_dict.get('type', 'unknown')
+                    setting_dict['category'] = setting_dict.get('category', 'variable')
+                    settings_data.append(setting_dict)
+                return {
+                    "settings": settings_data,
+                    "total": len(settings_data)
+                }
                 
         except Exception as e:
             self.logger.error("get_request_failed",
-                            path=path,
+                            cost_id=cost_id,
                             error=str(e),
                             error_type=type(e).__name__)
             return {"error": f"Failed to process request: {str(e)}"}, 500

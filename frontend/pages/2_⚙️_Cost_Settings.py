@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.express as px
 
 # Constants
-API_URL = "http://127.0.0.1:5000"
+API_URL = "http://127.0.0.1:5000/api/v1"
 HEADERS = {
     'Content-Type': 'application/json',
     'Accept': 'application/json'
@@ -32,7 +32,8 @@ try:
     if not st.session_state.current_settings:
         response = requests.get(f"{API_URL}/costs/settings", headers=HEADERS)
         if response.status_code == 200:
-            st.session_state.current_settings = response.json()
+            data = response.json()
+            st.session_state.current_settings = data['settings']
         else:
             st.error(f"Failed to load cost settings: {response.text}")
             st.stop()
@@ -144,7 +145,7 @@ try:
             if response.status_code == 200:
                 st.success("Settings saved successfully!")
                 st.session_state.settings_changed = True
-                st.session_state.current_settings = response.json()
+                st.session_state.current_settings = response.json()['settings']
             else:
                 st.error(f"Failed to save settings: {response.text}")
         except Exception as e:
@@ -159,7 +160,7 @@ try:
             )
             if response.status_code == 200:
                 st.success("Settings reset to defaults!")
-                st.session_state.current_settings = response.json()
+                st.session_state.current_settings = response.json()['settings']
                 st.experimental_rerun()
             else:
                 st.error(f"Failed to reset settings: {response.text}")

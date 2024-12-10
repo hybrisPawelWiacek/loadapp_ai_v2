@@ -161,11 +161,12 @@ def create_app():
     api_bp = Blueprint('api', __name__, url_prefix='/api/v1')
     api = Api(api_bp)
 
-    # Register route endpoint
+    # Register cost endpoint
     api.add_resource(
-        RouteEndpoint, 
-        '/routes', 
-        '/routes/<route_id>',
+        CostEndpoint, 
+        '/costs',
+        '/costs/<string:cost_id>',
+        '/costs/settings',
         resource_class_kwargs={
             'repository': None,  # Will be created per request
             'metrics_service': metrics_service,
@@ -175,11 +176,11 @@ def create_app():
         }
     )
 
-    # Register cost endpoint
+    # Register route endpoint
     api.add_resource(
-        CostEndpoint, 
-        '/costs', 
-        '/costs/<cost_id>',
+        RouteEndpoint, 
+        '/routes',
+        '/routes/<string:route_id>',
         resource_class_kwargs={
             'repository': None,  # Will be created per request
             'metrics_service': metrics_service,
@@ -191,16 +192,28 @@ def create_app():
 
     # Register offer endpoint
     api.add_resource(
-        OfferEndpoint, 
-        '/offers', 
-        '/offers/<offer_id>',
+        OfferEndpoint,
+        '/offers',
+        '/offers/<string:offer_id>',
         resource_class_kwargs={
             'offer_service': offer_service,
             'metrics_service': metrics_service
         }
     )
 
+    # Register the blueprint with the app
     app.register_blueprint(api_bp)
+
+    logger.info("api_routes_registered", 
+        endpoints=[
+            "/api/v1/costs/settings",
+            "/api/v1/costs/<cost_id>",
+            "/api/v1/routes",
+            "/api/v1/routes/<route_id>",
+            "/api/v1/offers",
+            "/api/v1/offers/<offer_id>"
+        ]
+    )
 
     # Log all registered routes
     logger.info("=== REGISTERED ROUTES ===")

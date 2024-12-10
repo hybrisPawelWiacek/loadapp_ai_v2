@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, JSON, UUID, Index
-from sqlalchemy.dialects.sqlite import JSON
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON, Boolean, Enum as SQLEnum
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -8,7 +8,7 @@ from .db_setup import Base
 class Route(Base):
     __tablename__ = "routes"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     origin_latitude = Column(Float, nullable=False)
     origin_longitude = Column(Float, nullable=False)
     origin_address = Column(String, nullable=False)
@@ -35,15 +35,22 @@ class Route(Base):
 class Offer(Base):
     __tablename__ = "offers"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    route_id = Column(String, ForeignKey('routes.id'), nullable=False)
-    total_cost = Column(Float, nullable=False)
-    margin = Column(Float, nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    route_id = Column(UUID(as_uuid=True), ForeignKey('routes.id'), nullable=False)
+    client_id = Column(UUID(as_uuid=True), nullable=True)
+    countries = Column(JSON, nullable=True)
+    regions = Column(JSON, nullable=True)
+    cost_breakdown = Column(JSON, nullable=False)
+    margin_percentage = Column(Float, nullable=False)
     final_price = Column(Float, nullable=False)
-    fun_fact = Column(String)
-    status = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    cost_breakdown = Column(JSON)  # Stores Dict[str, float]
+    currency = Column(SQLEnum('EUR', 'USD', 'GBP', name='currency'), nullable=False)
+    status = Column(SQLEnum('DRAFT', 'PENDING', 'SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED', name='offerstatus'), nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
+    offer_metadata = Column(JSON, nullable=False, default={})
 
     # Relationship with route
     route = relationship("Route", back_populates="offers")
@@ -52,7 +59,7 @@ class CostItem(Base):
     """Model for storing cost calculation settings."""
     __tablename__ = 'cost_settings'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Fixed UUID handling
     name = Column(String(100), nullable=False, unique=True)
     type = Column(String(50), nullable=False)
     category = Column(String(50), nullable=False)

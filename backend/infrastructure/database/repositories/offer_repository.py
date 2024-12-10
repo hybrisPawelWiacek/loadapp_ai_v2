@@ -8,6 +8,7 @@ from sqlalchemy import and_, desc
 from backend.domain.entities.offer import Offer, OfferStatus, ValidationResult, BusinessRuleResult, OfferMetrics, GeographicRestriction
 from backend.infrastructure.database.models import Offer as OfferModel, OfferVersionModel, OfferEventModel, CostSetting
 from backend.infrastructure.logging import logger
+from backend.infrastructure.serialization import json_dumps
 from .versionable_repository import VersionableRepository
 
 from dataclasses import dataclass
@@ -50,8 +51,8 @@ class OfferRepository(VersionableRepository[OfferModel]):
     def _to_model(self, entity: Offer) -> OfferModel:
         """Convert domain entity to database model."""
         return OfferModel(
-            id=str(entity.id),
-            route_id=str(entity.route_id),
+            id=entity.id,  # Keep as UUID
+            route_id=entity.route_id,  # Keep as UUID
             total_cost=entity.total_cost,
             margin=entity.margin,
             final_price=entity.final_price,
@@ -156,15 +157,19 @@ class OfferRepository(VersionableRepository[OfferModel]):
             raise
 
     def list_offers(
-        self,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        min_price: Optional[float] = None,
-        max_price: Optional[float] = None,
-        status: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0
-    ) -> List[Offer]:
+            self,
+            start_date: Optional[datetime] = None,
+            end_date: Optional[datetime] = None,
+            min_price: Optional[float] = None,
+            max_price: Optional[float] = None,
+            status: Optional[str] = None,
+            currency: Optional[str] = None,
+            countries: Optional[List[str]] = None,
+            regions: Optional[List[str]] = None,
+            client_id: Optional[UUID] = None,
+            limit: int = 100,
+            offset: int = 0
+        ) -> List[Offer]:
         """List offers with optional filtering and pagination.
         
         Args:
@@ -173,6 +178,10 @@ class OfferRepository(VersionableRepository[OfferModel]):
             min_price: Optional minimum final price
             max_price: Optional maximum final price
             status: Optional offer status filter
+            currency: Optional currency filter
+            countries: Optional list of countries
+            regions: Optional list of regions
+            client_id: Optional client ID filter
             limit: Maximum number of offers to return (default: 100)
             offset: Number of offers to skip (default: 0)
         
@@ -183,16 +192,6 @@ class OfferRepository(VersionableRepository[OfferModel]):
             SQLAlchemyError: If there's a database error
         """
         try:
-            # Start building the base query
-            self.logger.debug("building_offer_query", 
-                            filters={
-                                "start_date": start_date.isoformat() if start_date else None,
-                                "end_date": end_date.isoformat() if end_date else None,
-                                "min_price": min_price,
-                                "max_price": max_price,
-                                "status": status
-                            })
-            
             query = self.session.query(OfferModel)
             filters_applied = []
 
@@ -216,6 +215,24 @@ class OfferRepository(VersionableRepository[OfferModel]):
             if status:
                 query = query.filter(OfferModel.status == status)
                 filters_applied.append("status")
+
+            # Apply currency filter if provided
+            if currency:
+                query = query.filter(OfferModel.currency == currency)
+                filters_applied.append("currency")
+
+            # Apply geographic filters if provided
+            if countries:
+                query = query.filter(OfferModel.countries.overlap(countries))
+                filters_applied.append("countries")
+            if regions:
+                query = query.filter(OfferModel.regions.overlap(regions))
+                filters_applied.append("regions")
+
+            # Apply client filter if provided
+            if client_id:
+                query = query.filter(OfferModel.client_id == str(client_id))
+                filters_applied.append("client_id")
 
             # Log the applied filters
             self.logger.info("filters_applied", filters=filters_applied)
@@ -258,6 +275,10 @@ class OfferRepository(VersionableRepository[OfferModel]):
                     "min_price": min_price,
                     "max_price": max_price,
                     "status": status,
+                    "currency": currency,
+                    "countries": countries,
+                    "regions": regions,
+                    "client_id": str(client_id) if client_id else None,
                     "limit": limit,
                     "offset": offset
                 }
@@ -653,51 +674,91 @@ class OfferRepository(VersionableRepository[OfferModel]):
             self.logger.error("offer_event_recording_failed", error=str(e))
             raise
 
-    def create_version(self, version_data: dict) -> None:
-        """Create a new version record for an offer."""
+    def create_version(self, version_data: dict) -> bool:
+        """Create a new version record."""
         try:
-            version_model = OfferVersionModel(
-                id=version_data['id'],
-                entity_id=version_data['entity_id'],  # Changed from offer_id
-                version=version_data['version'],
-                data=version_data['data'],
-                created_at=version_data['created_at'],
-                created_by=version_data['created_by'],
-                change_reason=version_data['change_reason'],
-                version_metadata=version_data['version_metadata']
-            )
+            # Convert data to JSON string using custom serializer
+            if 'data' in version_data:
+                version_data['data'] = json_dumps(version_data['data'])
+            if 'version_metadata' in version_data:
+                version_data['version_metadata'] = json_dumps(version_data['version_metadata'])
+
+            version_model = OfferVersionModel(**version_data)
             self.session.add(version_model)
             self.session.commit()
-            self.logger.info("offer_version_created",
-                           offer_id=version_data['entity_id'],
-                           version=version_data['version'])
-        except SQLAlchemyError as e:
+            self.logger.info(
+                "offer_version_created",
+                offer_id=version_data['entity_id'],
+                version=version_data['version']
+            )
+            return True
+        except Exception as e:
             self.session.rollback()
-            self.logger.error("offer_version_creation_failed",
-                            error=str(e),
-                            offer_id=version_data['entity_id'])
+            self.logger.error(
+                "offer_version_creation_failed",
+                error=str(e),
+                offer_id=version_data.get('entity_id'),
+                repository="OfferRepository"
+            )
             raise
 
     def _model_to_entity(self, model: OfferModel) -> Offer:
         """Convert a database model to a domain entity."""
-        data = {
-            "id": model.id,
-            "route_id": model.route_id,
-            "total_cost": model.total_cost,
-            "margin": model.margin,
-            "final_price": model.final_price,
-            "currency": model.currency,
-            "status": model.status,
-            "created_at": model.created_at,
-            "updated_at": model.updated_at,
-            "cost_breakdown": model.cost_breakdown,
-            "applied_settings": model.applied_settings,
-            "ai_insights": model.ai_insights,
-            "version": model.version,
-            "metadata": model.metadata,
-            "geographic_restrictions": GeographicRestriction(**model.geographic_restrictions) if model.geographic_restrictions else None,
-            "business_rules_validation": [BusinessRuleResult(**rule) for rule in model.business_rules_validation],
-            "metrics": OfferMetrics(**model.metrics) if model.metrics else None
-        }
-        
-        return Offer(**data)
+        try:
+            return Offer(
+                id=model.id,
+                customer_id=model.customer_id,
+                route_id=model.route_id,
+                cost_setting_id=model.cost_setting_id,
+                status=OfferStatus(model.status),
+                validation_result=ValidationResult(**model.validation_result) if model.validation_result else None,
+                business_rule_result=BusinessRuleResult(**model.business_rule_result) if model.business_rule_result else None,
+                metrics=OfferMetrics(**model.metrics) if model.metrics else None,
+                geographic_restriction=GeographicRestriction(**model.geographic_restriction) if model.geographic_restriction else None,
+                created_at=model.created_at,
+                updated_at=model.updated_at,
+                created_by=model.created_by,
+                updated_by=model.updated_by,
+                version=model.version
+            )
+        except Exception as e:
+            self.logger.error(
+                "model_to_entity_conversion_failed",
+                error=str(e),
+                offer_id=model.id if model else None,
+                repository="OfferRepository"
+            )
+            raise
+
+    def _entity_to_model(self, entity: Offer) -> OfferModel:
+        """Convert a domain entity to a database model."""
+        try:
+            validation_result = json_dumps(entity.validation_result.__dict__) if entity.validation_result else None
+            business_rule_result = json_dumps(entity.business_rule_result.__dict__) if entity.business_rule_result else None
+            metrics = json_dumps(entity.metrics.__dict__) if entity.metrics else None
+            geographic_restriction = json_dumps(entity.geographic_restriction.__dict__) if entity.geographic_restriction else None
+
+            return OfferModel(
+                id=entity.id,
+                customer_id=entity.customer_id,
+                route_id=entity.route_id,
+                cost_setting_id=entity.cost_setting_id,
+                status=entity.status.value,
+                validation_result=validation_result,
+                business_rule_result=business_rule_result,
+                metrics=metrics,
+                geographic_restriction=geographic_restriction,
+                created_at=entity.created_at,
+                updated_at=entity.updated_at,
+                created_by=entity.created_by,
+                updated_by=entity.updated_by,
+                version=entity.version
+            )
+        except Exception as e:
+            self.logger.error(
+                "entity_to_model_conversion_failed",
+                error=str(e),
+                offer_id=entity.id if entity else None,
+                repository="OfferRepository"
+            )
+            raise

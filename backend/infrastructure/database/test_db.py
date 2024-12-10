@@ -52,14 +52,14 @@ def test_database_setup():
         )
         
         transport_type = TransportType(
-            id=str(uuid4()),
+            id=uuid4(),
             name="Standard Truck",
             capacity={"weight": 24000, "volume": 80},
             restrictions=["ADR", "TEMP_CONTROLLED"]
         )
         
         cargo = Cargo(
-            id=str(uuid4()),
+            id=uuid4(),
             type="general",
             weight=15000,
             value=50000,
@@ -104,8 +104,8 @@ def test_database_setup():
         
         # Create a test offer
         offer = Offer(
-            id=str(uuid4()),
-            route_id=str(db_route.id),
+            id=uuid4(),
+            route_id=db_route.id,
             total_cost=1500.0,
             margin=0.15,
             final_price=1725.0,

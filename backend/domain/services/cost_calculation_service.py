@@ -99,6 +99,15 @@ class CostCalculationService:
             CostCalculationError: If calculation fails
         """
         try:
+            # Log input data types
+            self.logger.debug(
+                "starting_cost_calculation",
+                route_id=route.id,
+                route_id_type=type(route.id).__name__,
+                settings_count=len(settings) if settings else 0,
+                settings_types={k: type(v).__name__ for k, v in (settings or {}).items()}
+            )
+            
             # Validate route data
             validation_errors = self._validate_route(route)
             if validation_errors:
@@ -107,21 +116,62 @@ class CostCalculationService:
             # Get cost settings
             cost_settings = []
             if settings:
+                # Log settings conversion
+                self.logger.debug(
+                    "converting_settings",
+                    settings_keys=list(settings.keys()),
+                    settings_values_types={k: type(v).__name__ for k, v in settings.items()}
+                )
+                
                 # Convert settings dict to CostSetting objects
                 for setting_type, setting_value in settings.items():
-                    cost_settings.append(CostSetting(
-                        id=str(uuid4()),
-                        type=setting_type,
-                        value=setting_value,
-                        enabled=True
-                    ))
+                    setting_id = uuid4()
+                    self.logger.debug(
+                        "creating_cost_setting",
+                        setting_type=setting_type,
+                        setting_id=setting_id,
+                        setting_id_type=type(setting_id).__name__,
+                        value_type=type(setting_value).__name__
+                    )
+                    
+                    try:
+                        cost_settings.append(CostSetting(
+                            id=setting_id,
+                            name=f"{setting_type.title()} Cost",
+                            type=setting_type,
+                            category="variable",
+                            base_value=float(setting_value),
+                            description=f"Auto-generated {setting_type} cost setting"
+                        ))
+                    except Exception as e:
+                        self.logger.error(
+                            "cost_setting_creation_failed",
+                            setting_type=setting_type,
+                            setting_id=setting_id,
+                            error=str(e),
+                            error_type=type(e).__name__
+                        )
+                        raise
             else:
                 # Get enabled cost settings from repository
+                self.logger.debug("fetching_enabled_cost_settings")
                 cost_settings = self.cost_settings_repository.get_enabled_cost_settings()
                 if not cost_settings:
                     raise CostCalculationError("No enabled cost settings found")
+                
+                self.logger.debug(
+                    "fetched_cost_settings",
+                    settings_count=len(cost_settings),
+                    settings_ids=[str(s.id) for s in cost_settings],
+                    settings_types=[s.type for s in cost_settings]
+                )
             
             # Perform cost calculation
+            self.logger.debug(
+                "performing_calculation",
+                route_id=route.id,
+                cost_settings_count=len(cost_settings)
+            )
             cost_breakdown = self._perform_calculation(route, cost_settings)
             
             # Get historical costs for pattern analysis
@@ -214,89 +264,74 @@ class CostCalculationService:
     def _perform_calculation(self, route: Route, cost_settings: List[CostSetting]) -> Dict:
         """
         Perform the actual cost calculation using the provided cost settings.
-        
-        Args:
-            route: Route object to calculate costs for
-            cost_settings: List of enabled cost settings to apply
-            
-        Returns:
-            Dictionary containing the cost breakdown
         """
-        cost_breakdown = {
-            "base_costs": {
-                "base": 0.0,
-                "insurance": 0.0,
-                "admin": 0.0
-            },
-            "variable_costs": {
-                "fuel": 0.0,
-                "driver": 0.0,
-                "maintenance": 0.0,
-                "time": 0.0
-            },
-            "cargo_specific_costs": {},
-            "total": 0.0
-        }
-        
         try:
-            # Group settings by category for easier processing
-            settings_by_category = {
-                "base": [],
-                "variable": [],
-                "cargo-specific": []
+            self.logger.debug(
+                "starting_perform_calculation",
+                route_id=route.id,
+                cost_settings_ids=[str(s.id) for s in cost_settings],
+                cost_settings_types=[s.type for s in cost_settings]
+            )
+            
+            # Initialize cost breakdown
+            cost_breakdown = {
+                "base_costs": {},
+                "variable_costs": {},
+                "cargo_specific_costs": {},
+                "total": 0.0
             }
             
+            # Calculate costs for each setting
             for setting in cost_settings:
-                if setting.category in settings_by_category:
-                    settings_by_category[setting.category].append(setting)
-            
-            # Calculate base costs
-            for setting in settings_by_category["base"]:
-                cost = setting.apply_multiplier()
-                cost_breakdown["base_costs"][setting.type] = cost
-                
-                # Track individual cost components
-                self.metrics_service.gauge(
-                    f"cost_calculation.component.{setting.type}",
-                    cost,
-                    labels={"route_id": str(route.id), "category": "base"}
+                self.logger.debug(
+                    "calculating_setting_cost",
+                    setting_id=setting.id,
+                    setting_type=setting.type,
+                    setting_category=setting.category
                 )
-                cost_breakdown["total"] += cost
-            
-            # Calculate variable costs based on route properties
-            for setting in settings_by_category["variable"]:
-                cost = self._calculate_variable_cost(route, setting)
-                cost_breakdown["variable_costs"][setting.type] = cost
                 
-                self.metrics_service.gauge(
-                    f"cost_calculation.component.{setting.type}",
-                    cost,
-                    labels={"route_id": str(route.id), "category": "variable"}
-                )
-                cost_breakdown["total"] += cost
-            
-            # Calculate cargo-specific costs
-            if route.cargo:
-                cargo_costs = self._calculate_cargo_costs(
-                    route.cargo, settings_by_category["cargo-specific"]
-                )
-                # Initialize cargo-specific costs for this cargo
-                cost_breakdown["cargo_specific_costs"][str(route.cargo.id)] = {}
-                
-                for cost_type, cost in cargo_costs.items():
-                    # Add to the appropriate cost type under the cargo ID
-                    cost_breakdown["cargo_specific_costs"][str(route.cargo.id)][cost_type] = cost
-                    cost_breakdown["total"] += cost
-                    
-                    self.metrics_service.gauge(
-                        f"cost_calculation.component.{cost_type}",
-                        cost,
-                        labels={
-                            "route_id": str(route.id),
-                            "cargo_id": str(route.cargo.id),
-                            "category": "cargo-specific"
-                        }
+                try:
+                    if setting.category == "variable":
+                        cost = self._calculate_variable_cost(route, setting)
+                        cost_breakdown["variable_costs"][setting.type] = cost
+                    elif setting.category == "cargo" and route.cargo:
+                        cost = self._calculate_cargo_costs(route.cargo, [setting])
+                        cost_breakdown["cargo_specific_costs"][setting.type] = cost
+                    else:
+                        cost = setting.base_value
+                        cost_breakdown["base_costs"][setting.type] = cost
+                        
+                    self.logger.debug(
+                        "calculated_setting_cost",
+                        setting_id=setting.id,
+                        setting_type=setting.type,
+                        cost=cost
                     )
+                        
+                except Exception as e:
+                    self.logger.error(
+                        "setting_calculation_failed",
+                        setting_id=setting.id,
+                        setting_type=setting.type,
+                        error=str(e),
+                        error_type=type(e).__name__
+                    )
+                    raise
+            
+            # Calculate total cost
+            cost_breakdown["total"] = sum(
+                cost_breakdown["base_costs"].values()
+            ) + sum(
+                cost_breakdown["variable_costs"].values()
+            ) + sum(
+                [sum(costs.values()) for costs in cost_breakdown["cargo_specific_costs"].values()]
+            )
+            
+            self.logger.debug(
+                "total_cost_calculated",
+                route_id=route.id,
+                total_cost=cost_breakdown["total"]
+            )
             
             return cost_breakdown
             

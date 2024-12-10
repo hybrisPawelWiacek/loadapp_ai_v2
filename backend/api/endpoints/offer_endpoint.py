@@ -102,8 +102,8 @@ class OfferEndpoint(Resource):
         
         # Initialize request parser for common parameters
         self.parser = reqparse.RequestParser()
-        self.parser.add_argument('page', type=int, location='args')
-        self.parser.add_argument('per_page', type=int, location='args')
+        self.parser.add_argument('page', type=int, location='args', default=1)
+        self.parser.add_argument('page_size', type=int, location='args', default=10)
         self.parser.add_argument('sort_by', type=str, location='args')
         self.parser.add_argument('sort_order', type=str, location='args')
         self.parser.add_argument('filter_by', type=str, location='args')
@@ -111,6 +111,18 @@ class OfferEndpoint(Resource):
         self.parser.add_argument('include_deleted', type=str, location='args')
         self.parser.add_argument('include_history', type=str, location='args')
         self.parser.add_argument('include_metrics', type=str, location='args')
+        self.parser.add_argument('include_settings', type=str, location='args')
+        
+        # Add offer filter parameters
+        self.parser.add_argument('start_date', type=str, location='args')
+        self.parser.add_argument('end_date', type=str, location='args')
+        self.parser.add_argument('min_price', type=float, location='args', default=0.0)
+        self.parser.add_argument('max_price', type=float, location='args', default=float('inf'))
+        self.parser.add_argument('status', type=str, location='args')
+        self.parser.add_argument('currency', type=str, location='args')
+        self.parser.add_argument('countries', type=str, location='args')
+        self.parser.add_argument('regions', type=str, location='args')
+        self.parser.add_argument('client_id', type=str, location='args')
 
     def _log_request_params(self, method: str, **params) -> None:
         """Log request parameters with method, timestamp, and client info."""

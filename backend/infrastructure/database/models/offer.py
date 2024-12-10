@@ -6,7 +6,7 @@ import uuid
 
 from ..session import Base
 from .base_version import BaseVersionModel
-from ....domain.entities.offer import OfferStatus, Currency
+from backend.domain.entities.offer import OfferStatus, Currency
 
 class OfferModel(Base):
     """SQLAlchemy model for offers."""
@@ -16,6 +16,10 @@ class OfferModel(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     route_id = Column(UUID(as_uuid=True), ForeignKey('routes.id'), nullable=False)
     client_id = Column(UUID(as_uuid=True), nullable=True)
+    
+    # Geographic information
+    countries = Column(JSON, nullable=True)  # List of country codes
+    regions = Column(JSON, nullable=True)    # List of region codes
     
     # Cost and pricing
     cost_breakdown = Column(JSON, nullable=False, default=dict)
@@ -56,7 +60,9 @@ class OfferModel(Base):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'expires_at': self.expires_at.isoformat() if self.expires_at else None,
-            'metadata': self.offer_metadata
+            'metadata': self.offer_metadata,
+            'countries': self.countries,
+            'regions': self.regions
         }
 
 class OfferVersionModel(BaseVersionModel):

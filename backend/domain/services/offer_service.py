@@ -60,13 +60,13 @@ class OfferService:
     ) -> Offer:
         """Generate an enhanced offer with all features."""
         try:
-            request_id = str(uuid4())
+            request_id = uuid4()
             start_time = datetime.now(UTC)
             
             self.logger.info(
                 "generating_offer",
                 request_id=request_id,
-                route_id=str(route.id),
+                route_id=route.id,
                 margin=margin_percentage,
                 currency=currency
             )
@@ -137,8 +137,8 @@ class OfferService:
             self.logger.info(
                 "offer_generated",
                 request_id=request_id,
-                route_id=str(route.id),
-                offer_id=str(offer.id),
+                route_id=route.id,
+                offer_id=offer.id,
                 processing_time_ms=processing_time
             )
             
@@ -150,7 +150,7 @@ class OfferService:
                 error=str(e),
                 error_type=type(e).__name__,
                 request_id=request_id,
-                route_id=str(route.id),
+                route_id=route.id,
                 service="OfferService"
             )
             raise
@@ -177,7 +177,7 @@ class OfferService:
 
             return offer
         except Exception as e:
-            self.logger.error("get_offer_failed", error=str(e), offer_id=str(offer_id))
+            self.logger.error("get_offer_failed", error=str(e), offer_id=offer_id)
             raise
 
     def update_offer(
@@ -235,7 +235,7 @@ class OfferService:
             self.logger.error(
                 "update_offer_failed",
                 error=str(e),
-                offer_id=str(offer_id)
+                offer_id=offer_id
             )
             raise
 
@@ -315,7 +315,7 @@ class OfferService:
                     "currency": currency,
                     "countries": countries,
                     "regions": regions,
-                    "client_id": str(client_id) if client_id else None
+                    "client_id": client_id
                 }
             )
 
@@ -409,7 +409,7 @@ class OfferService:
             if success:
                 self.logger.info(
                     "offer_deleted",
-                    offer_id=str(offer_id),
+                    offer_id=offer_id,
                     user_id=user_id,
                     reason=reason
                 )
@@ -420,7 +420,7 @@ class OfferService:
             self.logger.error(
                 "delete_offer_failed",
                 error=str(e),
-                offer_id=str(offer_id)
+                offer_id=offer_id
             )
             raise
 
@@ -456,8 +456,8 @@ class OfferService:
                 'entity_id': offer.id,  
                 'version': offer.version,
                 'data': {
-                    'route_id': str(offer.route_id),
-                    'client_id': str(offer.client_id) if offer.client_id else None,
+                    'route_id': offer.route_id,
+                    'client_id': offer.client_id,
                     'cost_breakdown': offer.cost_breakdown.to_dict(),
                     'margin_percentage': offer.margin_percentage,
                     'final_price': offer.final_price,
@@ -482,7 +482,7 @@ class OfferService:
 
             self.logger.info(
                 "offer_saved_with_version",
-                offer_id=str(offer.id),
+                offer_id=offer.id,
                 version=offer.version
             )
 
@@ -491,7 +491,7 @@ class OfferService:
                 "save_with_version_history_failed",
                 error=str(e),
                 error_type=type(e).__name__,
-                offer_id=str(offer.id),
+                offer_id=offer.id,
                 version=offer.version
             )
             raise

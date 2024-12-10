@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from .location import Location
 from .timeline import TimelineEvent
 from .cargo import Cargo, TransportType
+from dateutil import tz
 
 @dataclass
 class CountrySegment:
@@ -56,6 +57,25 @@ class Route:
     optimization_insights: Dict = field(default_factory=dict)
     last_calculated: Optional[datetime] = None
 
+    def __post_init__(self):
+        # Ensure id is a UUID object
+        if isinstance(self.id, str):
+            self.id = UUID(self.id)
+            
+        # Ensure timeline and timeline_events are synchronized
+        if not self.timeline and self.timeline_events:
+            self.timeline = self.timeline_events
+        elif not self.timeline_events and self.timeline:
+            self.timeline_events = self.timeline
+            
+        # Ensure datetimes are timezone-aware (UTC)
+        if isinstance(self.pickup_time, datetime) and not self.pickup_time.tzinfo:
+            self.pickup_time = self.pickup_time.replace(tzinfo=tz.tzutc())
+        if isinstance(self.delivery_time, datetime) and not self.delivery_time.tzinfo:
+            self.delivery_time = self.delivery_time.replace(tzinfo=tz.tzutc())
+        if isinstance(self.last_calculated, datetime) and not self.last_calculated.tzinfo:
+            self.last_calculated = self.last_calculated.replace(tzinfo=tz.tzutc())
+
     def to_dict(self) -> dict:
         """Convert Route to dictionary with proper datetime handling."""
         def convert_value(value):
@@ -81,8 +101,14 @@ class Route:
                 try:
                     result[key] = convert_value(value)
                 except Exception as e:
-                    # If conversion fails, try to get a string representation
-                    result[key] = str(value)
+                    # Log the error and skip the field instead of using str()
+                    import structlog
+                    logger = structlog.get_logger(__name__)
+                    logger.warning("failed_to_convert_field",
+                                 field=key,
+                                 error=str(e),
+                                 route_id=str(self.id))
+                    continue
         return result
 
     @classmethod
@@ -142,69 +168,27 @@ class Route:
                 ]
             )
 
-        # Convert timeline events
-        timeline_events = []
-        for event in data.get('timeline_events', []):
-            event_copy = event.copy()
-            
-            # Convert location if present
-            if 'location' in event_copy:
-                if isinstance(event_copy['location'], dict):
-                    event_copy['location'] = Location(**event_copy['location'])
-            
-            # Handle time field - always use 'time' field
-            if 'time' in event_copy:
-                event_copy['time'] = datetime.fromisoformat(event_copy['time'])
-                event_copy['planned_time'] = event_copy['time']
-            
-            # Convert duration to minutes if in hours
-            if 'duration' in event_copy:
-                event_copy['duration_minutes'] = int(float(event_copy.pop('duration')) * 60)
-            elif 'duration_minutes' not in event_copy:
-                event_copy['duration_minutes'] = 0
-            
-            # Map description fields
-            if 'notes' in event_copy:
-                event_copy['description'] = event_copy.pop('notes')
-            elif 'description' not in event_copy:
-                event_copy['description'] = ""
-                
-            # Ensure type field is present
-            if 'event_type' in event_copy and 'type' not in event_copy:
-                event_copy['type'] = event_copy.pop('event_type')
-            elif 'type' not in event_copy:
-                event_copy['type'] = ""
-                
-            # Set is_required based on event type if not present
-            if 'is_required' not in event_copy:
-                event_copy['is_required'] = event_copy['type'] in ['pickup', 'delivery']
-            
-            # Remove any fields not in TimelineEvent class
-            valid_fields = {'type', 'time', 'location', 'planned_time', 
-                          'duration_minutes', 'description', 'is_required'}
-            event_copy = {k: v for k, v in event_copy.items() if k in valid_fields}
-            
-            timeline_events.append(TimelineEvent(**event_copy))
-
-        # Create and return the Route instance
-        return cls(
+        # Create the Route instance
+        route = cls(
+            id=UUID(data['id']) if isinstance(data.get('id'), str) else data.get('id', uuid4()),
             origin=origin,
             destination=destination,
             pickup_time=pickup_time,
             delivery_time=delivery_time,
-            empty_driving=empty_driving or EmptyDriving(),
-            main_route=main_route or MainRoute(),
+            empty_driving=empty_driving,
+            main_route=main_route,
+            timeline_events=data.get('timeline_events', []),
             timeline=data.get('timeline', []),
-            timeline_events=timeline_events,
             total_duration_hours=float(data.get('total_duration_hours', 0.0)),
-            id=UUID(data['id']) if data.get('id') else None,
             transport_type=data.get('transport_type'),
             cargo=cargo,
-            is_feasible=bool(data.get('is_feasible', True)),
-            duration_validation=bool(data.get('duration_validation', True)),
+            is_feasible=data.get('is_feasible', True),
+            duration_validation=data.get('duration_validation', True),
             total_cost=float(data.get('total_cost', 0.0)),
             currency=data.get('currency', 'EUR'),
             cost_breakdown=data.get('cost_breakdown', {}),
             optimization_insights=data.get('optimization_insights', {}),
             last_calculated=last_calculated
         )
+
+        return route

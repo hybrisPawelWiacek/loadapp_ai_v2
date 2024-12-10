@@ -13,8 +13,6 @@ import json
 import uuid
 from components.route_input_form import render_route_input_form
 from components.route_display import render_route_display, render_route_map
-from components.advanced_cost_settings import render_cost_settings
-from pages.offer_review import render_offer_review_page
 import pandas as pd
 
 # Constants
@@ -39,17 +37,21 @@ if 'margin' not in st.session_state:
     st.session_state.margin = 15
 
 # Title and description
-st.title("LoadApp.AI - Transport Planning Made Easy")
+st.title("🚚 LoadApp.AI - Transport Planning Made Easy")
 st.markdown("""
-    Calculate routes, costs, and generate offers for your transport needs.
-    Get AI-powered insights and fun facts about your routes!
+    🌟 Calculate routes, costs, and generate offers for your transport needs.
+    🤖 Get AI-powered insights and fun facts about your routes!
 """)
 
 # Sidebar for navigation
-page = st.sidebar.radio("Navigation", ["New Route", "Cost Settings", "Review Offers"])
+page = st.sidebar.radio(
+    "🧭 Navigation",
+    ["🛣️ New Route"]
+)
 
-if page == "New Route":
+if page == "🛣️ New Route":
     # Step 1: Route Input Form
+    st.header("🚛 Plan Your Route")
     form_data = render_route_input_form()
     
     if form_data:
@@ -143,7 +145,7 @@ if page == "New Route":
         'cost_breakdown' in st.session_state.current_costs):
         
         st.markdown("---")
-        st.subheader("Cost Breakdown")
+        st.subheader("💰 Cost Breakdown")
         
         costs = st.session_state.current_costs
         breakdown = costs['cost_breakdown']
@@ -231,14 +233,16 @@ if page == "New Route":
         # Generate Offer
         st.markdown("---")
         st.markdown("### Generate Offer")
-        st.session_state.margin = st.slider("Profit Margin (%)", 
-                                          min_value=5, 
-                                          max_value=30, 
-                                          value=st.session_state.margin, 
-                                          step=1)
+        st.session_state.margin = st.slider(
+            "📈 Margin (%)", 
+            min_value=0, 
+            max_value=50, 
+            value=st.session_state.margin,
+            step=1
+        )
         
-        if st.button("Generate Offer"):
-            with st.spinner("Generating your offer... Did you know? AI-powered route optimization can reduce empty driving by up to 20%!"):
+        if st.button("✨ Generate Offer"):
+            with st.spinner("🔄 Generating your offer... Did you know? AI-powered route optimization can reduce empty driving by up to 20%!"):
                 try:
                     offer_response = requests.post(
                         f"{API_URL}/api/v1/offers",
@@ -255,7 +259,8 @@ if page == "New Route":
                         
                         # Display Offer Summary immediately after generation
                         st.markdown("---")
-                        st.markdown("### 📋 Offer Summary")
+                        st.subheader("📋 Offer Details")
+                        offer = st.session_state.current_offer
                         offer_col1, offer_col2, offer_col3 = st.columns(3)
                         
                         with offer_col1:
@@ -274,8 +279,8 @@ if page == "New Route":
                         
                         # Display feedback section only after offer is generated
                         st.markdown("---")
-                        st.markdown("### 📝 Your Feedback")
-                        st.markdown("Help us improve! Share your experience with our service.")
+                        st.subheader("📝 Feedback")
+                        st.write("⭐ How satisfied are you with this offer?")
                         
                         col1, col2 = st.columns([1, 2])
                         with col1:
@@ -314,9 +319,3 @@ if page == "New Route":
                         st.error("Failed to generate offer. Please try again.")
                 except Exception as e:
                     st.error(f"An error occurred: {str(e)}")
-
-elif page == "Cost Settings":
-    render_cost_settings()
-
-else:  # Review Offers
-    render_offer_review_page()

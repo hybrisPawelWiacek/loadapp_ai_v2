@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 @dataclass
 class TransportCapacity:
@@ -12,7 +12,7 @@ class TransportType:
     name: str = ""
     capacity: TransportCapacity = None
     restrictions: List[str] = None
-    id: str = field(default_factory=lambda: str(uuid4()))
+    id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self):
         if self.capacity is None:
@@ -34,7 +34,7 @@ class Cargo:
     weight: float
     value: float
     special_requirements: List[str] = None
-    id: str = field(default_factory=lambda: str(uuid4()))
+    id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self):
         if self.special_requirements is None:
