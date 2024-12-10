@@ -762,3 +762,96 @@ class OfferRepository(VersionableRepository[OfferModel]):
                 repository="OfferRepository"
             )
             raise
+
+    def count_offers(
+            self,
+            start_date: Optional[datetime] = None,
+            end_date: Optional[datetime] = None,
+            min_price: Optional[float] = None,
+            max_price: Optional[float] = None,
+            status: Optional[str] = None,
+            currency: Optional[str] = None,
+            countries: Optional[List[str]] = None,
+            regions: Optional[List[str]] = None,
+            client_id: Optional[UUID] = None
+        ) -> int:
+        """Count offers with optional filtering.
+        
+        Args:
+            start_date: Optional start date for filtering offers
+            end_date: Optional end date for filtering offers
+            min_price: Optional minimum final price
+            max_price: Optional maximum final price
+            status: Optional offer status filter
+            currency: Optional currency filter
+            countries: Optional list of countries
+            regions: Optional list of regions
+            client_id: Optional client ID filter
+        
+        Returns:
+            int: Count of offers matching the filter criteria
+            
+        Raises:
+            SQLAlchemyError: If there's a database error
+        """
+        try:
+            query = self.session.query(OfferModel)
+            filters_applied = []
+
+            # Apply date range filters if provided
+            if start_date:
+                query = query.filter(OfferModel.created_at >= start_date)
+                filters_applied.append("start_date")
+            if end_date:
+                query = query.filter(OfferModel.created_at <= end_date)
+                filters_applied.append("end_date")
+
+            # Apply price range filters if provided
+            if min_price is not None:
+                query = query.filter(OfferModel.final_price >= min_price)
+                filters_applied.append("min_price")
+            if max_price is not None:
+                query = query.filter(OfferModel.final_price <= max_price)
+                filters_applied.append("max_price")
+
+            # Apply status filter if provided
+            if status:
+                query = query.filter(OfferModel.status == status)
+                filters_applied.append("status")
+
+            # Apply currency filter if provided
+            if currency:
+                query = query.filter(OfferModel.currency == currency)
+                filters_applied.append("currency")
+
+            # Apply client filter if provided
+            if client_id:
+                query = query.filter(OfferModel.client_id == str(client_id))
+                filters_applied.append("client_id")
+
+            # Apply geographic filters if provided
+            if countries or regions:
+                geographic_conditions = []
+                if countries:
+                    geographic_conditions.append(OfferModel.offer_metadata['countries'].contains(countries))
+                if regions:
+                    geographic_conditions.append(OfferModel.offer_metadata['regions'].contains(regions))
+                if geographic_conditions:
+                    query = query.filter(and_(*geographic_conditions))
+                    filters_applied.extend(["countries", "regions"])
+
+            count = query.count()
+            self.logger.info(
+                "offers_counted",
+                count=count,
+                filters_applied=filters_applied
+            )
+            return count
+
+        except SQLAlchemyError as e:
+            self.logger.error(
+                "offer_count_failed",
+                error=str(e),
+                filters_applied=filters_applied
+            )
+            raise

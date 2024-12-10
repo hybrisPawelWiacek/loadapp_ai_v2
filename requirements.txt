@@ -21,3 +21,7 @@ mypy>=1.5.1
 pandas>=2.1.0
 plotly>=5.16.0
 pytz>=2023.3.post1
+requests>=2.31.0
+folium>=0.14.0
+streamlit-folium>=0.13.0
+

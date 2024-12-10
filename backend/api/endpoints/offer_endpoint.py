@@ -280,9 +280,7 @@ class OfferEndpoint(Resource):
                     "offers_listed",
                     total_offers=len(offers),
                     total_count=total_count,
-                    page=page,
-                    page_size=page_size,
-                    **context
+                    **{k: v for k, v in context.items() if k not in ['page', 'page_size']}
                 )
                 return response_data, 200
 

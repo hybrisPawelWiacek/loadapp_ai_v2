@@ -569,7 +569,7 @@ After refactoring, confirm that the standardized components still work end-to-en
 **Goal:** Validate the standardized frontend components.
 
 **Instruction to AI Dev Agent:**  
-"In `tests/test_frontend_components.py`, create or update tests that:
+"In `tests/test_frontend_components.py` and `tests/test_streamlit_ui.py` or any other UI tests, create or update tests that:
 
 - Verify that each component matches the new structure and interface defined in `mix_final_scope2.md`.
 - Confirm that existing functionalities (inputs, outputs, events) remain unchanged.
