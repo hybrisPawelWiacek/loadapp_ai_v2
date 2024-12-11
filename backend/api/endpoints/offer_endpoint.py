@@ -106,11 +106,15 @@ class OfferEndpoint(Resource):
                 page = int(filters.pop("page", 1))
                 page_size = int(filters.pop("page_size", 10))
 
-                offers, total = self.offer_service.list_offers(
-                    filters=filters,
-                    page=page,
-                    page_size=page_size
-                )
+                try:
+                    offers, total = self.offer_service.list_offers(
+                        filters=filters,
+                        page=page,
+                        page_size=page_size
+                    )
+                except Exception as e:
+                    self.logger.error("list_offers_failed", error=str(e))
+                    offers, total = [], 0
 
                 response = {
                     "offers": [
@@ -131,7 +135,7 @@ class OfferEndpoint(Resource):
                             metrics=offer.metrics.to_dict() if hasattr(offer, 'metrics') and offer.metrics else None
                         ).to_dict()
                         for offer in offers
-                    ],
+                    ] if offers else [],
                     "total": total,
                     "page": page,
                     "page_size": page_size
@@ -211,3 +215,14 @@ class OfferEndpoint(Resource):
         except Exception as e:
             self.logger.error("delete_offer_failed", error=str(e))
             return {"error": str(e)}, 500
+
+    def get_offers(self):
+        """Get all offers"""
+        try:
+            offers = self.offer_service.get_offers()
+            return jsonify({
+                'status': 'success',
+                'data': [offer.to_dict() for offer in offers]
+            })
+        except Exception as e:
+            return {'error': str(e)}, 500

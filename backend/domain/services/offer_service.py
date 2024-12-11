@@ -255,20 +255,25 @@ class OfferService:
         try:
             self.logger.info("listing_offers", filters=filters)
             
-            # Calculate offset
+            # Extract filter values
+            min_price = filters.get('min_price')
+            max_price = filters.get('max_price')
+            start_date = filters.get('start_date')
+            end_date = filters.get('end_date')
+            currency = filters.get('currency')
+            status = filters.get('status')
+            
+            # Calculate offset from page and page_size
             offset = (page - 1) * page_size
             
-            # Apply filters with geographic restrictions
-            offers, total = self.offer_repository.get_offers(
-                start_date=filters.get('start_date'),
-                end_date=filters.get('end_date'),
-                min_price=filters.get('min_price'),
-                max_price=filters.get('max_price'),
-                status=filters.get('status'),
-                currency=filters.get('currency'),
-                countries=filters.get('countries'),
-                regions=filters.get('regions'),
-                client_id=filters.get('client_id'),
+            # Call repository method with unpacked parameters
+            offers, total = self.offer_repository.list_offers(
+                min_price=min_price,
+                max_price=max_price,
+                start_date=start_date,
+                end_date=end_date,
+                currency=currency,
+                status=status,
                 limit=page_size,
                 offset=offset
             )
