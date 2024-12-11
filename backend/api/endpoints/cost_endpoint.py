@@ -10,11 +10,12 @@ from ...domain.services.cost_optimization_service import CostOptimizationService
 from ...domain.services.cost_settings_service import CostSettingsService
 from ...domain.validators.cost_setting_validator import CostSettingValidator
 from ...domain.entities.route import Route
+from ...domain.entities.cost_setting import CostSetting
 from ...infrastructure.database.repositories.base_repository import BaseRepository
 from ...infrastructure.database.repositories.cost_setting_repository import CostSettingsRepository
 from ...infrastructure.database.repositories.route_repository import RouteRepository
 from ...infrastructure.database.session import SessionLocal
-from ...infrastructure.database.models.cost_setting import CostSetting, CostSettingModel
+from ...infrastructure.database.models.cost_setting import CostSettingModel
 from ...infrastructure.database.models.route import RouteModel
 from ...infrastructure.monitoring.metrics_service import MetricsService
 
@@ -73,7 +74,7 @@ class CostEndpoint(Resource):
         
         # Initialize cost settings service
         self.cost_settings_service = CostSettingsService(
-            repository=self.repository,
+            repository=self.cost_settings_repository,
             validator=self.cost_validator,
             metrics_service=self.metrics_service
         )
@@ -152,7 +153,7 @@ class CostEndpoint(Resource):
             
             if cost_id:
                 return self._calculate_route_cost(cost_id)
-            elif path == 'settings':
+            elif request.path.endswith('/settings'):
                 # Parse and validate request data
                 if not request.is_json:
                     return {"error": "Request must be JSON"}, 400
@@ -163,14 +164,22 @@ class CostEndpoint(Resource):
                     
                 # Convert JSON to CostSetting objects
                 try:
-                    settings = [CostSetting(**setting_data) for setting_data in data]
+                    settings = []
+                    for setting_data in data:
+                        # Map 'value' to 'base_value' for CostSetting
+                        if 'value' in setting_data:
+                            setting_data['base_value'] = setting_data.pop('value')
+                        settings.append(CostSetting(**setting_data))
                 except Exception as e:
                     self.logger.error("invalid_settings_format", error=str(e))
                     return {"error": f"Invalid settings format: {str(e)}"}, 400
                 
                 # Update settings
                 result = self.cost_settings_service.update_settings(settings)
-                return jsonify({"message": "Settings updated successfully", "updated": len(result)}), 200
+                if result.get('success', False):
+                    return {"message": "Settings updated successfully", "updated": result.get('updated_count', 0)}, 200
+                else:
+                    return {"error": "Failed to update settings", "details": result.get('errors', [])}, 400
             else:
                 self.logger.error("invalid_post_path", path=path)
                 return {"error": "Invalid endpoint for POST request"}, 404

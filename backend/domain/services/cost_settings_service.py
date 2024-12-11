@@ -77,7 +77,7 @@ class CostSettingsService:
             
             # If there are critical errors, don't proceed with update
             if critical_errors:
-                self.metrics_service.increment("cost_settings.validation_failures")
+                self.metrics_service.counter("cost_settings.validation_failures")
                 return {
                     "success": False,
                     "errors": [
@@ -106,13 +106,13 @@ class CostSettingsService:
             
             # Track metrics
             update_duration = (datetime.utcnow() - start_time).total_seconds()
-            self.metrics_service.timing(
+            self.metrics_service.histogram(
                 "cost_settings.update_duration",
                 update_duration
             )
             
             if success:
-                self.metrics_service.increment("cost_settings.successful_updates")
+                self.metrics_service.counter("cost_settings.successful_updates")
                 self.logger.info("settings_updated_successfully",
                                count=len(settings),
                                warning_count=len(warnings))
@@ -132,7 +132,7 @@ class CostSettingsService:
                     "timestamp": datetime.utcnow().isoformat()
                 }
             else:
-                self.metrics_service.increment("cost_settings.failed_updates")
+                self.metrics_service.counter("cost_settings.failed_updates")
                 self.logger.error("failed_to_update_settings")
                 return {
                     "success": False,
@@ -152,7 +152,7 @@ class CostSettingsService:
                 }
                 
         except Exception as e:
-            self.metrics_service.increment("cost_settings.update_errors")
+            self.metrics_service.counter("cost_settings.update_errors")
             self.logger.error("update_settings_error", error=str(e))
             raise
 

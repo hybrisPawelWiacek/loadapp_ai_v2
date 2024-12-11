@@ -10,12 +10,13 @@ from backend.domain.entities.time_range import TimeRange
 from backend.domain.entities.usage_data import UsageData
 from backend.infrastructure.database.models import CostSettingModel
 from backend.infrastructure.logging import logger
+from backend.infrastructure.database.repositories.base_repository import BaseRepository
 
-class CostSettingsRepository:
+class CostSettingsRepository(BaseRepository[CostSettingModel]):
     """Repository for managing cost settings in the database."""
 
     def __init__(self, session: Session):
-        self.session = session
+        super().__init__(session, CostSettingModel)
         self.logger = logger.bind(repository="CostSettingsRepository")
 
     def _to_entity(self, model: CostSettingModel) -> CostSettingEntity:
@@ -52,12 +53,12 @@ class CostSettingsRepository:
         """Retrieve all cost settings from the database."""
         try:
             # First check if we have any settings
-            settings = self.session.query(CostSettingModel).all()
+            settings = self.get_all()
             
             # If no settings exist, initialize default ones
             if not settings:
                 self.initialize_default_settings()
-                settings = self.session.query(CostSettingModel).all()
+                settings = self.get_all()
             
             return [self._to_entity(model) for model in settings]
         except SQLAlchemyError as e:
@@ -67,7 +68,7 @@ class CostSettingsRepository:
     def get_enabled_cost_settings(self) -> List[CostSettingEntity]:
         """Retrieve only enabled cost settings."""
         try:
-            models = self.session.query(CostSettingModel).filter(CostSettingModel.is_enabled == True).all()
+            models = self.filter_by(is_enabled=True)
             return [self._to_entity(model) for model in models]
         except SQLAlchemyError as e:
             self.logger.error("failed_to_get_enabled_settings", error=str(e))
@@ -78,17 +79,22 @@ class CostSettingsRepository:
         try:
             with self.session.begin_nested():
                 for setting in settings:
-                    model = self.session.query(CostSettingModel).get(setting.id)  # Keep as UUID
+                    model = self.get_by_id(str(setting.id))
                     if model is None:
                         self.logger.warning("setting_not_found", setting_id=str(setting.id))
                         continue
                     
-                    # Update model fields
-                    for key, value in setting.to_dict().items():
-                        if hasattr(model, key):
-                            setattr(model, key, value)
-                    
+                    # Update model fields with proper mapping
+                    model.name = setting.name
+                    model.type = setting.type
+                    model.category = setting.category
+                    model.value = setting.base_value  # Map base_value to value
+                    model.multiplier = setting.multiplier
+                    model.currency = setting.currency
+                    model.is_enabled = setting.is_enabled
+                    model.description = setting.description
                     model.last_updated = datetime.utcnow()
+                    
                     self.session.merge(model)
             
             self.session.commit()
@@ -101,7 +107,7 @@ class CostSettingsRepository:
     def get_cost_setting_by_type(self, type: str) -> Optional[CostSettingEntity]:
         """Retrieve a cost setting by its type."""
         try:
-            model = self.session.query(CostSettingModel).filter(CostSettingModel.type == type).first()
+            model = self.filter_by(type=type)[0] if self.filter_by(type=type) else None
             return self._to_entity(model) if model else None
         except SQLAlchemyError as e:
             self.logger.error("failed_to_get_setting_by_type", type=type, error=str(e))
@@ -224,52 +230,58 @@ class CostSettingsRepository:
         return cost_setting
 
     def initialize_default_settings(self) -> None:
-        """Initialize default cost settings if none exist."""
+        """Initialize default cost settings if they don't exist."""
         try:
+            # Check if settings already exist
+            existing_settings = self.session.query(CostSettingModel).first()
+            if existing_settings:
+                self.logger.info("default_settings_already_exist")
+                return
+
             # Create default settings
             default_settings = [
                 CostSettingModel(
-                    id=uuid4(),
-                    name="Base Distance Cost",
-                    type="distance",
-                    category="transport",
-                    value=1.5,  # €/km
+                    name="Fuel Cost",
+                    type="fuel",
+                    category="variable",
+                    value=2.0,  # €2.0 per liter
                     multiplier=1.0,
                     currency="EUR",
                     is_enabled=True,
-                    description="Base cost per kilometer traveled"
+                    description="Cost per liter of fuel"
                 ),
                 CostSettingModel(
-                    id=uuid4(),
-                    name="Base Time Cost",
-                    type="time",
-                    category="transport",
-                    value=50.0,  # €/hour
+                    name="Driver Cost",
+                    type="driver",
+                    category="fixed",
+                    value=200.0,  # €200 per day
                     multiplier=1.0,
                     currency="EUR",
                     is_enabled=True,
-                    description="Base cost per hour of transport"
+                    description="Driver daily rate"
                 ),
                 CostSettingModel(
-                    id=uuid4(),
-                    name="Toll Cost",
-                    type="toll",
-                    category="transport",
-                    value=1.0,
+                    name="Maintenance Cost",
+                    type="maintenance",
+                    category="variable",
+                    value=0.5,  # €0.5 per km
                     multiplier=1.0,
                     currency="EUR",
                     is_enabled=True,
-                    description="Toll costs for transport routes"
+                    description="Vehicle maintenance cost per kilometer"
                 )
             ]
-            
-            # Add all default settings
+
             for setting in default_settings:
                 self.session.add(setting)
             self.session.commit()
-            
-            self.logger.info("default_settings_initialized", count=len(default_settings))
-        except SQLAlchemyError as e:
-            self.logger.error("failed_to_initialize_default_settings", error=str(e))
+            self.logger.info("default_settings_initialized_successfully")
+
+        except Exception as e:
+            self.logger.error(
+                "failed_to_initialize_default_settings",
+                error=str(e),
+                error_type=type(e).__name__
+            )
             self.session.rollback()
             raise
