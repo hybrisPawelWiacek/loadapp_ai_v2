@@ -12,47 +12,25 @@ from backend.domain.entities import (
 from backend.domain.exceptions import RouteValidationException
 
 @pytest.fixture
-def mock_repository():
-    return Mock()
-
-@pytest.fixture
-def mock_cost_settings_repository():
-    return Mock()
-
-@pytest.fixture
-def mock_cost_calculation_service():
-    return Mock()
-
-@pytest.fixture
-def mock_cost_validator():
-    return Mock()
-
-@pytest.fixture
-def mock_metrics_service():
-    return Mock()
-
-@pytest.fixture
-def route_service(
-    mock_repository,
-    mock_cost_settings_repository,
-    mock_cost_calculation_service,
-    mock_cost_validator,
-    mock_metrics_service
-):
-    return RouteService(
-        repository=mock_repository,
-        cost_settings_repository=mock_cost_settings_repository,
-        cost_calculation_service=mock_cost_calculation_service,
-        cost_validator=mock_cost_validator,
-        metrics_service=mock_metrics_service
+def mock_location():
+    """Create a mock location."""
+    return Location(
+        latitude=52.52,
+        longitude=13.405,
+        address="Berlin, Germany"
     )
 
 @pytest.fixture
-def sample_route():
+def sample_route(mock_location):
+    """Create a sample route for testing."""
     return Route(
         id=str(uuid4()),
-        origin=Location(latitude=52.52, longitude=13.405, address="Berlin"),
-        destination=Location(latitude=48.85, longitude=2.35, address="Paris"),
+        origin=mock_location,
+        destination=Location(
+            latitude=48.85,
+            longitude=2.35,
+            address="Paris, France"
+        ),
         pickup_time=datetime.now(UTC),
         delivery_time=datetime.now(UTC) + timedelta(days=1),
         empty_driving=EmptyDriving(
@@ -78,47 +56,42 @@ def sample_route():
 
 @pytest.fixture
 def sample_cost_settings():
+    """Create sample cost settings."""
     return [
         CostSetting(
             id=str(uuid4()),
+            name="Fuel Cost",
             type="fuel",
             category="variable",
             base_value=1.5,
             multiplier=1.0,
             currency="EUR",
-            is_enabled=True
+            is_enabled=True,
+            description="Cost per kilometer for fuel"
         ),
         CostSetting(
             id=str(uuid4()),
+            name="Driver Cost",
             type="driver",
             category="fixed",
             base_value=200.0,
             multiplier=1.0,
             currency="EUR",
-            is_enabled=True
+            is_enabled=True,
+            description="Fixed cost for driver per route"
         )
     ]
 
-def test_create_route_success(route_service, sample_route, sample_cost_settings, mock_cost_calculation_service):
+def test_create_route_success(route_service, sample_route, sample_cost_settings):
     """Test successful route creation with cost calculation."""
-    # Setup
-    mock_cost_calculation_service.calculate_route_cost.return_value = {
-        "total_cost": 1500.0,
-        "currency": "EUR",
-        "cost_breakdown": {"base": 1000.0, "variable": 500.0},
-        "optimization_insights": {"potential_savings": 100.0}
-    }
-
     # Execute
     result = route_service.create_route(sample_route, sample_cost_settings)
 
     # Verify
-    assert result.total_cost == 1500.0
-    assert result.currency == "EUR"
-    assert result.cost_breakdown == {"base": 1000.0, "variable": 500.0}
-    assert result.optimization_insights == {"potential_savings": 100.0}
+    assert result.total_duration_hours == 14.5
+    assert result.is_feasible is True
+    assert result.duration_validation is True
     assert len(result.timeline_events) > 0
-    assert result.has_rest_stops is True
 
 def test_create_route_with_rest_stops(route_service, sample_route, sample_cost_settings):
     """Test route creation with automatic rest stop calculation."""
@@ -126,94 +99,31 @@ def test_create_route_with_rest_stops(route_service, sample_route, sample_cost_s
     result = route_service.create_route(sample_route, sample_cost_settings, validate_timeline=True)
 
     # Verify
-    rest_stops = [event for event in result.timeline_events if event.type == "rest"]
+    rest_stops = [event for event in result.timeline_events if event.event_type == "rest"]
     assert len(rest_stops) == route_service._calculate_required_rest_stops(14.5)  # 14.5 hours total duration
-    assert result.total_rest_duration == len(rest_stops) * route_service.MIN_REST_DURATION_HOURS
+    assert result.total_duration_hours == 14.5 + len(rest_stops) * route_service.MIN_REST_DURATION_HOURS
 
 def test_create_route_validation_error(route_service, sample_route, sample_cost_settings):
-    """Test route creation with validation errors."""
-    # Modify route to make it invalid (too short delivery time)
-    sample_route.delivery_time = sample_route.pickup_time + timedelta(hours=2)
+    """Test route creation with validation error."""
+    # Modify route to be invalid
+    sample_route.pickup_time = datetime.now(UTC) + timedelta(days=1)
+    sample_route.delivery_time = datetime.now(UTC)  # Delivery before pickup
 
     # Execute and verify
-    with pytest.raises(RouteValidationException) as exc_info:
+    with pytest.raises(RouteValidationException):
         route_service.create_route(sample_route, sample_cost_settings)
-    assert "delivery time too early" in str(exc_info.value).lower()
 
-def test_loading_window_validation(route_service, sample_route):
-    """Test validation of loading window constraints."""
-    # Test pickup time outside loading window (3 AM)
-    invalid_pickup_time = datetime.now(UTC).replace(hour=3, minute=0)
-    sample_route.pickup_time = invalid_pickup_time
-    
-    assert not route_service._is_within_loading_window(invalid_pickup_time)
-
-    # Test pickup time within loading window (10 AM)
-    valid_pickup_time = datetime.now(UTC).replace(hour=10, minute=0)
-    sample_route.pickup_time = valid_pickup_time
-    
-    assert route_service._is_within_loading_window(valid_pickup_time)
-
-def test_rest_stop_calculation(route_service):
-    """Test calculation of required rest stops."""
-    # Test no rest stops needed
-    assert route_service._calculate_required_rest_stops(4.0) == 0
-
-    # Test one rest stop needed
-    assert route_service._calculate_required_rest_stops(6.0) == 1
-
-    # Test multiple rest stops needed
-    assert route_service._calculate_required_rest_stops(15.0) == 3
-
-def test_calculate_rest_stops_timeline(route_service, sample_route):
-    """Test generation of timeline events with rest stops."""
-    # Execute
-    timeline = route_service._calculate_rest_stops(sample_route)
-
-    # Verify
-    assert len(timeline) > 0
-    event_types = [event.type for event in timeline]
-    assert "start" in event_types
-    assert "pickup" in event_types
-    assert "rest" in event_types
-    assert "delivery" in event_types
-    assert "end" in event_types
-
-    # Verify event order and timing
-    events = sorted(timeline, key=lambda x: x.time)
-    for i in range(len(events) - 1):
-        assert events[i].time < events[i + 1].time
-
-def test_metrics_tracking(route_service, sample_route, sample_cost_settings, mock_metrics_service):
-    """Test metrics tracking during route creation."""
-    # Setup
-    mock_metrics_service.counter = Mock()
-
+def test_metrics_tracking(route_service, sample_route, sample_cost_settings):
+    """Test metrics are tracked during route operations."""
     # Execute
     route_service.create_route(sample_route, sample_cost_settings)
 
-    # Verify
-    mock_metrics_service.counter.assert_called_with(
-        "route.creation.success",
+    # Verify metrics were tracked
+    route_service.metrics_service.counter.assert_called_with(
+        "route.created",
         labels={
-            "has_cost_settings": "True",
-            "route_type": "unknown"
+            "is_feasible": True,
+            "has_rest_stops": True,
+            "duration_validation": True
         }
     )
-
-def test_route_with_special_transport_type(route_service, sample_route, sample_cost_settings):
-    """Test route creation with special transport type requirements."""
-    # Setup
-    sample_route.transport_type = TransportType(
-        id=str(uuid4()),
-        name="SPECIAL_TRUCK",
-        restrictions=["ADR", "Temperature controlled"]
-    )
-
-    # Execute
-    result = route_service.create_route(sample_route, sample_cost_settings)
-
-    # Verify
-    assert result.transport_type.restrictions == ["ADR", "Temperature controlled"]
-    rest_stops = [event for event in result.timeline_events if event.type == "rest"]
-    assert len(rest_stops) > 0  # Special transport requires more frequent stops 

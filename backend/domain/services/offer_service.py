@@ -8,6 +8,7 @@ from enum import Enum
 from backend.domain.entities.offer import Offer, OfferStatus, Currency, ValidationResult, BusinessRuleResult, OfferMetrics, GeographicRestriction, CostBreakdown
 from backend.domain.entities.route import Route, TransportType
 from backend.infrastructure.database.repositories.offer_repository import OfferRepository
+from backend.infrastructure.database.repositories.route_repository import RouteRepository
 from backend.infrastructure.external.ai_integration import AIIntegrationService
 from .cost_calculation_service import CostCalculationService
 from backend.infrastructure.ai.offer_insights import OfferInsightsService
@@ -21,12 +22,14 @@ class OfferService:
         self,
         db_repository: OfferRepository,
         cost_service: CostCalculationService,
+        route_repository: Optional[RouteRepository] = None,
         ai_service: Optional[AIIntegrationService] = None,
         insights_service: Optional[OfferInsightsService] = None
     ):
         """Initialize the OfferService with required dependencies."""
         self.logger = logger.bind(service="OfferService")
         self.offer_repository = db_repository
+        self.route_repository = route_repository
         
         # Initialize cost service with required dependencies
         self.logger.info(
@@ -520,3 +523,52 @@ class OfferService:
             rules["geographic_restrictions_valid"] = has_countries or has_regions
         
         return rules
+
+    def create_offer(
+        self,
+        route_id: UUID,
+        margin: float,
+        client_name: Optional[str] = None,
+        client_contact: Optional[str] = None,
+        geographic_restrictions: Optional[Dict[str, Any]] = None,
+        currency: str = "EUR",
+        user_id: str = "system"
+    ) -> Offer:
+        """Create a new offer from a route."""
+        try:
+            if not self.route_repository:
+                raise ValueError("RouteRepository is required but not provided")
+
+            # Get the route from the repository
+            route = self.route_repository.get_by_id(route_id)
+            if not route:
+                raise ValueError(f"Route {route_id} not found")
+
+            # Use default cost settings for now
+            cost_settings = {
+                "base_rate": 1.0,
+                "distance_rate": 1.0,
+                "time_rate": 1.0,
+                "cargo_rate": 1.0
+            }
+
+            # Generate the offer using existing method
+            return self.generate_offer(
+                route=route,
+                cost_settings=cost_settings,
+                margin_percentage=margin,
+                currency=currency,
+                client_name=client_name,
+                client_contact=client_contact,
+                geographic_restrictions=geographic_restrictions,
+                user_id=user_id
+            )
+
+        except Exception as e:
+            self.logger.error(
+                "create_offer_failed",
+                error=str(e),
+                route_id=route_id,
+                margin=margin
+            )
+            raise

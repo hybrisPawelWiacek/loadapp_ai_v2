@@ -1,216 +1,61 @@
 #!/usr/bin/env python3
 import os
 import sys
-import argparse
-import subprocess
-from typing import Optional
-import psycopg
-from psycopg.rows import dict_row
-import getpass
+from sqlalchemy import create_engine, text
+from dotenv import load_dotenv
 
-# Default configuration
-DEFAULT_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'user': getpass.getuser(),
-    'password': '',
-    'database': 'loadapp_test'
-}
-
-def run_command(command: str) -> tuple[int, str, str]:
-    """Run a shell command and return exit code, stdout, and stderr."""
-    process = subprocess.Popen(
-        command,
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-    stdout, stderr = process.communicate()
-    return process.returncode, stdout, stderr
-
-def check_postgres_running() -> bool:
-    """Check if PostgreSQL server is running."""
-    if sys.platform == 'darwin':  # macOS
-        cmd = "pg_isready"
-    elif sys.platform == 'linux':
-        cmd = "pg_isready"
-    else:  # Windows
-        cmd = "pg_isready.exe"
+def setup_test_database():
+    # Load environment variables
+    load_dotenv(".env.development")
     
-    exit_code, _, _ = run_command(cmd)
-    return exit_code == 0
-
-def get_connection(database: Optional[str] = None) -> psycopg.Connection:
-    """Create a database connection using psycopg3."""
-    conn_params = {
-        'host': DEFAULT_CONFIG['host'],
-        'port': DEFAULT_CONFIG['port'],
-        'user': DEFAULT_CONFIG['user']
-    }
+    # Database configuration
+    DB_USER = os.getenv("DB_USER", "postgres")
+    DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+    DB_HOST = os.getenv("DB_HOST", "localhost")
+    DB_PORT = os.getenv("DB_PORT", "5432")
+    TEST_DB_NAME = "loadapp_test"
     
-    # Only add password if it's not empty
-    if DEFAULT_CONFIG['password']:
-        conn_params['password'] = DEFAULT_CONFIG['password']
+    # Create admin connection URL
+    ADMIN_DB_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/postgres"
     
-    # Add database if specified, otherwise use postgres
-    if database:
-        conn_params['dbname'] = database
-    else:
-        conn_params['dbname'] = 'postgres'
-    
-    # Create connection string
-    conninfo = " ".join(f"{key}={value}" for key, value in conn_params.items())
-    
-    # Create connection with improved defaults
-    return psycopg.connect(
-        conninfo,
-        autocommit=True,
-        row_factory=dict_row
-    )
-
-def create_test_database():
-    """Create the test database if it doesn't exist."""
     try:
-        # Connect to PostgreSQL server
-        conn = get_connection(database=None)
-        cursor = conn.cursor()
+        # Create engine for admin operations
+        engine = create_engine(ADMIN_DB_URL, isolation_level="AUTOCOMMIT")
         
-        # Check if database exists
-        cursor.execute(
-            "SELECT 1 FROM pg_database WHERE datname = %s",
-            (DEFAULT_CONFIG['database'],)
-        )
-        exists = cursor.fetchone()
+        with engine.connect() as conn:
+            # Terminate existing connections
+            conn.execute(text(
+                f"""
+                SELECT pg_terminate_backend(pg_stat_activity.pid)
+                FROM pg_stat_activity
+                WHERE pg_stat_activity.datname = '{TEST_DB_NAME}'
+                AND pid <> pg_backend_pid()
+                """
+            ))
+            print(f"Terminated existing connections to '{TEST_DB_NAME}'")
+            
+            # Drop test database if it exists
+            conn.execute(text(f"DROP DATABASE IF EXISTS {TEST_DB_NAME}"))
+            print(f"Dropped existing database '{TEST_DB_NAME}' if it existed")
+            
+            # Create new test database
+            conn.execute(text(f"CREATE DATABASE {TEST_DB_NAME}"))
+            print(f"Created new database '{TEST_DB_NAME}'")
+            
+            # Create extensions if needed
+            test_db_url = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{TEST_DB_NAME}"
+            test_engine = create_engine(test_db_url, isolation_level="AUTOCOMMIT")
+            with test_engine.connect() as test_conn:
+                # Add any required PostgreSQL extensions here
+                test_conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+                print("Created required database extensions")
         
-        if not exists:
-            print(f"Creating database {DEFAULT_CONFIG['database']}...")
-            cursor.execute(f"CREATE DATABASE {DEFAULT_CONFIG['database']}")
-            print("Database created successfully!")
-        else:
-            print(f"Database {DEFAULT_CONFIG['database']} already exists.")
-        
-        cursor.close()
-        conn.close()
+        print("\nTest database setup completed successfully!")
+        return 0
         
     except Exception as e:
-        print(f"Error creating database: {e}")
-        sys.exit(1)
+        print(f"\nError setting up test database: {str(e)}", file=sys.stderr)
+        return 1
 
-def setup_test_user():
-    """Create test user with appropriate permissions."""
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        # Create test user if doesn't exist
-        cursor.execute(
-            "SELECT 1 FROM pg_roles WHERE rolname = 'test_user'"
-        )
-        exists = cursor.fetchone()
-        
-        if not exists:
-            print("Creating test user...")
-            cursor.execute(
-                "CREATE USER test_user WITH PASSWORD 'test_password'"
-            )
-            print("Test user created successfully!")
-        
-        # Grant privileges
-        cursor.execute(
-            f"GRANT ALL PRIVILEGES ON DATABASE {DEFAULT_CONFIG['database']} TO test_user"
-        )
-        print("Privileges granted to test user.")
-        
-        cursor.close()
-        conn.close()
-        
-    except Exception as e:
-        print(f"Error setting up test user: {e}")
-        sys.exit(1)
-
-def reset_test_database():
-    """Reset the test database to a clean state."""
-    try:
-        conn = get_connection(DEFAULT_CONFIG['database'])
-        cursor = conn.cursor()
-        
-        # Drop all tables
-        cursor.execute("""
-            DO $$ DECLARE
-                r RECORD;
-            BEGIN
-                FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
-                    EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE';
-                END LOOP;
-            END $$;
-        """)
-        print("All tables dropped successfully!")
-        
-        cursor.close()
-        conn.close()
-        
-    except Exception as e:
-        print(f"Error resetting database: {e}")
-        sys.exit(1)
-
-def setup_extensions():
-    """Set up required PostgreSQL extensions."""
-    try:
-        conn = get_connection(DEFAULT_CONFIG['database'])
-        cursor = conn.cursor()
-        
-        # Check available extensions
-        cursor.execute("SELECT extname FROM pg_available_extensions")
-        available_extensions = {row['extname'] for row in cursor.fetchall()}
-        
-        # Add required extensions if available
-        desired_extensions = [
-            'uuid-ossp',  # For UUID generation
-            'pg_trgm',    # For text search
-            'btree_gin'   # For GIN indexes
-        ]
-        
-        for ext in desired_extensions:
-            if ext in available_extensions:
-                print(f"Creating extension {ext}...")
-                cursor.execute(f"CREATE EXTENSION IF NOT EXISTS {ext}")
-            else:
-                print(f"Warning: Extension {ext} is not available")
-        
-        print("Extensions setup completed!")
-        
-        cursor.close()
-        conn.close()
-        
-    except Exception as e:
-        print(f"Error setting up extensions: {e}")
-        # Don't exit on extension errors, just warn
-        print("Continuing without all extensions...")
-
-def main():
-    parser = argparse.ArgumentParser(description='Set up PostgreSQL test database')
-    parser.add_argument('--reset', action='store_true', help='Reset the test database')
-    parser.add_argument('--config', type=str, help='Path to config file')
-    args = parser.parse_args()
-    
-    # Check if PostgreSQL is running
-    if not check_postgres_running():
-        print("Error: PostgreSQL is not running!")
-        sys.exit(1)
-    
-    if args.reset:
-        response = input("Are you sure you want to reset the test database? This will delete all data. (y/N) ")
-        if response.lower() == 'y':
-            reset_test_database()
-    
-    # Set up database
-    create_test_database()
-    setup_test_user()
-    setup_extensions()
-    
-    print("\nTest database setup completed successfully!")
-    print(f"\nConnection URL: postgresql://{DEFAULT_CONFIG['user']}:{DEFAULT_CONFIG['password']}@{DEFAULT_CONFIG['host']}:{DEFAULT_CONFIG['port']}/{DEFAULT_CONFIG['database']}")
-
-if __name__ == '__main__':
-    main() 
+if __name__ == "__main__":
+    sys.exit(setup_test_database()) 

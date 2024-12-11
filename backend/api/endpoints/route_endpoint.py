@@ -136,7 +136,7 @@ class RouteEndpoint(Resource):
                     cargo=cargo
                 )
                 self.logger.info("route_calculated", route_id=str(route.id))
-                return route.to_dict(), 200
+                return route.to_dict(), 201
 
             except RouteValidationException as e:
                 self.logger.error("route_validation_failed", errors=str(e.errors))
