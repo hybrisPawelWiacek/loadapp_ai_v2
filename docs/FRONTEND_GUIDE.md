@@ -1,304 +1,555 @@
-# LoadApp.AI Frontend Guide
+# Frontend Guide
 
-This guide describes how to use the LoadApp.AI Streamlit interface, including all available features and interactions with the backend system.
+## Overview
 
-## Getting Started
+LoadApp.AI uses Streamlit for its frontend implementation, providing a modern, responsive interface for transport planning and offer generation. For detailed frontend architecture and design patterns, see [Architecture Documentation](../docs/ARCHITECTURE.md#frontend-layer-streamlit).
 
-### Launching the Application
+### Directory Structure
+```
+frontend/
+├── 🏠_Home.py                    # Main application page
+├── pages/
+│   ├── 1_📊_Offer_Review.py     # Offer management
+│   └── 2_⚙️_Cost_Settings.py    # Cost configuration
+├── components/
+│   ├── route_input_form.py      # Route planning form
+│   ├── route_display.py         # Map visualization
+│   └── advanced_cost_settings.py # Cost configuration UI
+└── .streamlit/                  # Streamlit configuration
+```
 
-1. Open a terminal and navigate to the project directory:
-   ```bash
-   cd /path/to/loadapp.ai
-   ```
+The frontend follows a modular structure with:
+- Main page for route planning and offer generation
+- Dedicated pages for offer review and cost settings
+- Reusable components for common functionality
+- Configuration for Streamlit customization
 
-2. Start the Flask backend server:
-   ```bash
-   python3 app.py
-   ```
+## Pages
 
-3. In a new terminal, start the Streamlit frontend:
-   ```bash
-   streamlit run frontend/main.py
-   ```
+### 1. Home Page (🏠_Home.py)
+Main entry point for the application with:
+```python
+st.set_page_config(
+    page_title="LoadApp.AI",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-4. Your default browser will automatically open to `http://localhost:8501`
+# Core state initialization
+if 'current_route' not in st.session_state:
+    st.session_state.current_route = None
+if 'current_costs' not in st.session_state:
+    st.session_state.current_costs = None
+if 'current_offer' not in st.session_state:
+    st.session_state.current_offer = None
+```
 
-## Navigation
+Features:
+- Route planning with interactive form
+- Real-time route visualization
+- Dynamic cost calculation
+- AI-enhanced offer generation
+- Interactive map display
 
-The application consists of three main pages:
-- **Home**: Main route planning and offer generation
-- **Offer Review**: Historical data and past offers
-- **Cost Settings**: Advanced cost configuration
+### 2. Offer Review (1_📊_Offer_Review.py)
+Comprehensive offer management interface with:
+- Advanced filtering system
+- Analytics dashboard
+- Interactive visualizations
+- Detailed offer information:
+  - Route details with maps
+  - Cost breakdowns
+  - Market analysis
+  - Timeline tracking
 
-Use the sidebar navigation menu to switch between pages.
+### 3. Cost Settings (2_⚙️_Cost_Settings.py)
+Advanced cost configuration interface featuring:
+- Visual cost component analysis
+- Component-based settings:
+  - Variable costs (distance/time-based)
+  - Fixed costs (per trip)
+  - Special costs (conditional)
+- Real-time rate calculations
+- Settings persistence
 
-## Home Page
+For detailed state management and data flow, see [Architecture Documentation](../docs/ARCHITECTURE.md#frontend-layer-streamlit).
 
-The main page for route planning and offer generation.
+## Components
 
-### Route Planning Form
+### Route Input Form (route_input_form.py)
+```python
+def render_route_input_form() -> Optional[Dict[str, Any]]:
+    """Renders the route input form with validation."""
+    with st.form("route_form"):
+        # Location inputs (origin/destination)
+        # Schedule inputs (pickup/delivery)
+        # Cargo details
+        # Submit button
+```
 
-**Location Section:**
-- **Origin**: Enter pickup location (address or coordinates)
-  - Supports autocomplete for faster input
-  - Validates location exists and is reachable
-- **Destination**: Enter delivery location (address or coordinates)
-  - Supports autocomplete for faster input
-  - Validates location exists and is reachable
-- **Pickup Time**: Select date and time for cargo pickup
-  - Must be in the future
-  - Consider business hours
-- **Delivery Time**: Select date and time for delivery
-  - Must be after pickup time
-  - Considers realistic transit times
+Features:
+- Location input with address and coordinates
+- Schedule management with date/time pickers
+- Cargo configuration:
+  - Type and transport requirements
+  - Weight, volume, and value
+  - Special requirements selection
 
-**Cargo Details:**
-- **Type**: Select cargo type (e.g., general, temperature-controlled)
-  - Affects vehicle selection and costs
-  - May require special permits
-- **Weight (kg)**: Enter cargo weight
-  - Must be within vehicle capacity limits
-  - Affects fuel consumption calculation
-- **Value (EUR)**: Enter cargo value
-  - Used for insurance calculations
-  - Affects security requirements
-- **Special Requirements**: Select any special handling requirements
+### Route Display (route_display.py)
+```python
+def render_route_display(route_data: Dict[str, Any]) -> None:
+    """Displays route information and timeline."""
+    # Route metrics
+    # Timeline visualization
+    # Detailed information
+```
 
-**Transport Type:**
-- **Vehicle Selection**: Choose appropriate vehicle type
-  - Based on cargo requirements
-  - Considers weight limits
-  - Shows available options only
-- **Empty Driving**: Calculate potential empty return trips
-  - Affects total cost calculation
-  - Optimizes for efficiency
+Features:
+- Route metrics display
+- Interactive timeline visualization
+- Detailed route information
+- Map integration (planned)
 
-**Submit Button**: Sends data to `/route` endpoint to generate route plan
+### Advanced Cost Settings (advanced_cost_settings.py)
+```python
+@dataclass
+class CostSetting:
+    """Cost setting configuration."""
+    id: str
+    type: str
+    category: str
+    is_enabled: bool
+    base_value: float
+    multiplier: float
+    currency: str
+    description: Optional[str] = None
+```
 
-### Cost Calculation
+Features:
+- Cost component management
+- Real-time cost preview
+- Settings validation
+- Cost analysis visualization
 
-After submitting the route planning form, the system performs several calculations:
+For detailed component architecture and state management, see [Architecture Documentation](../docs/ARCHITECTURE.md#frontend-layer-streamlit).
 
-**Route Analysis:**
-1. Calculates optimal route including:
-   - Main route from origin to destination
-   - Empty driving segments (return trips)
-   - Total distance and estimated time
+## State Management
 
-**Cost Components:**
-2. Displays detailed cost breakdown:
-   - Fuel costs (based on distance and vehicle type)
-   - Empty driving costs (return trips)
-   - Driver wages (including overtime if applicable)
-   - Toll charges
-   - Additional fees (permits, special handling)
+### Session State
+Core application state variables:
+```python
+# Route planning state
+st.session_state.current_route    # Active route data
+st.session_state.current_costs    # Cost calculations
+st.session_state.current_offer    # Generated offer
+st.session_state.step            # Current workflow step
+st.session_state.margin          # Offer margin
 
-**Summary:**
-3. Shows total estimated cost with:
-   - Base cost components
-   - Additional fees
-   - Potential savings
-4. Allows cost adjustments via settings
+# Settings state
+st.session_state.cost_settings    # Cost configuration
+st.session_state.settings_changed # Settings modification flag
+st.session_state.preview_costs    # Cost preview data
 
-**Actions:**
-- Review cost details
-- Adjust individual components
-- Save for comparison
-- Proceed to offer generation
+# UI state
+st.session_state.form_submitted   # Form submission status
+st.session_state.page            # Current page number
+```
 
-**Calculate Costs Button**: Sends route ID to `/costs` endpoint
-
-### Offer Generation
-
-Once costs are calculated:
-1. Enter desired profit margin
-2. System generates complete offer including:
-   - All transport details
-   - Cost breakdown
-   - Final price
-   - Unique offer ID
-   - Fun fact about the route
-3. Option to:
-   - Save offer for later
-   - Send to customer
-   - Modify and recalculate
-
-**Generate Offer Button**: Sends data to `/offer` endpoint
-
-## Offer Review Page
-
-View and analyze historical offers.
-
-### Features
-
-**Filtering and Navigation:**
-- **Date Range Filter**: Select start and end dates to narrow down offers
-  - Default range is last 30 days
-  - Calendar picker for easy date selection
-  - Quick filters (Last week, Last month, etc.)
-
-**Offer List:**
-- Displays all offers within selected period
-- Sortable by date, price, status
-- Quick search by offer ID or route
-- Pagination for large result sets
-
-**Offer Details:**
-When clicking an offer, view:
-- Route information
-  - Origin and destination
-  - Pickup and delivery times
-  - Vehicle type used
-- Cost breakdown
-  - Base costs
-  - Additional fees
-  - Applied margin
-- Timeline
-  - Key milestones
-  - Status updates
-  - Activity log
-- Fun fact about the route
-- Current status
-
-**Data Export:**
-- Export filtered results to CSV
-- Include/exclude specific columns
-- Choose date format
-
-**Actions:**
-- Clone offer for new booking
-- Update offer status
-- Add notes/comments
-- Share offer details
-
-Data is fetched from `/data/review` endpoint with query parameters for filtering and pagination.
-
-## Cost Settings Page
-
-Configure and adjust cost calculation parameters.
-
-### Available Settings:
-
-**Cost Items:**
-- **Fuel**: Cost per kilometer
-- **Tolls**: Average toll charges
-- **Driver Wages**: Hourly rate
-- **Maintenance**: Per kilometer rate
-- **Special Handling**: Additional charges
-
-For each cost item:
-- Enable/disable toggle
-- Adjust base value
-- Set multiplier
-- Change currency (EUR only in PoC)
-
-**Save Settings Button**: Sends updates to `/costs/settings` endpoint
-
-## Component Standards
-
-### Standardized Components
-
-The application uses standardized frontend components for consistency and maintainability:
-
-1. **Route Input Form** (`frontend/components/route_input_form.py`)
-   - Standardized input validation
-   - Consistent error handling
-   - Integrated location autocomplete
-   - Real-time validation feedback
-
-2. **Route Display** (`frontend/components/route_display.py`)
-   - Unified route visualization
-   - Interactive map component
-   - Consistent timeline display
-   - Standardized status indicators
-
-3. **Cost Settings** (`frontend/components/advanced_cost_settings.py`)
-   - Standardized input controls
-   - Unified validation rules
-   - Consistent layout and styling
-   - Real-time calculation updates
-
-### Component Testing
-
-All frontend components are thoroughly tested using the pytest framework:
-
-1. **Test Coverage**
-   - Component rendering
-   - User interactions
-   - State management
-   - API integrations
-   - Error scenarios
-
-2. **Running Component Tests**
-   ```bash
-   # Run all frontend tests
-   pytest tests/test_streamlit_ui.py
+### State Flow
+1. Route Planning Flow:
+   ```python
+   # New route calculation
+   st.session_state.current_route = route_response.json()
+   st.session_state.current_costs = None  # Reset costs
+   st.session_state.step = 'route_summary'
    
-   # Run with coverage report
-   pytest tests/test_streamlit_ui.py --cov=frontend
+   # Cost calculation
+   st.session_state.current_costs = cost_response.json()
+   st.session_state.step = 'cost_summary'
+   
+   # Offer generation
+   st.session_state.current_offer = offer_response.json()
+   st.session_state.step = 'offer_summary'
    ```
 
-3. **Test Requirements**
-   - All dependencies are managed in the root `requirements.txt`
-   - No separate test requirements file needed
-   - Includes all necessary testing utilities
+2. Settings Management Flow:
+   ```python
+   # Load settings
+   st.session_state.cost_settings = fetch_settings()
+   
+   # Update settings
+   st.session_state.settings_changed = True
+   st.session_state.preview_costs = preview_data
+   ```
 
-## Tips for Users
+For detailed state management patterns and data flow architecture, see [Architecture Documentation](../docs/ARCHITECTURE.md#frontend-layer-streamlit).
 
-1. **Route Planning**:
-   - Always verify pickup/delivery times are realistic
-   - Check cargo weight against vehicle capacity
-   - Review timeline for any scheduling conflicts
+## API Integration
 
-2. **Cost Calculation**:
-   - Review all cost components before proceeding
-   - Use cost settings to adjust for special circumstances
-   - Consider enabling/disabling cost items based on route
+### Configuration
+```python
+API_URL = "http://127.0.0.1:5000/api/v1"
+HEADERS = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+}
+```
 
-3. **Offer Generation**:
-   - Adjust margin based on market conditions
-   - Review final price before sending to customer
-   - Save important offers for future reference
+### Core Endpoints
 
-4. **Data Review**:
-   - Regularly review historical data
-   - Use filters to find specific offers
-   - Export data for external analysis
+1. Route Planning:
+```python
+# Calculate route
+response = requests.post(
+    f"{API_URL}/routes",
+    json=route_data,
+    headers=HEADERS
+)
 
-## Loading States
+# Calculate costs
+response = requests.post(
+    f"{API_URL}/costs/{route_id}",
+    json={"route_id": route_id},
+    headers=HEADERS
+)
 
-The application shows loading indicators during:
-- Route calculation
-- Cost computation
-- Offer generation
-- Settings updates
+# Generate offer
+response = requests.post(
+    f"{API_URL}/offers",
+    json={
+        "route_id": route_id,
+        "margin": margin
+    },
+    headers=HEADERS
+)
+```
 
-During these operations, a fun fact about transportation is displayed to keep users engaged.
+2. Settings Management:
+```python
+# Get settings
+response = requests.get(
+    f"{API_URL}/costs/settings",
+    headers=HEADERS
+)
 
-## Error Handling
+# Update settings
+response = requests.post(
+    f"{API_URL}/costs/settings",
+    json={"cost_items": settings},
+    headers=HEADERS
+)
+```
 
-The UI handles common errors:
-- Invalid input validation with clear messages
-- Network connectivity issues
-- Backend service errors
-- Missing or invalid data
+### Error Handling
+```python
+try:
+    response = requests.post(f"{API_URL}/route", json=route_data)
+    if response.status_code == 200:
+        data = response.json()
+        # Handle success
+    else:
+        st.error(f"Error: {response.json().get('error', 'Unknown error')}")
+except Exception as e:
+    st.error(f"Connection error: {str(e)}")
+```
 
-Error messages are displayed prominently with suggested actions.
+For detailed API specifications and backend integration patterns, see [Architecture Documentation](../docs/ARCHITECTURE.md#api-layer-flask-restful).
 
-## Browser Compatibility
+## UI/UX Guidelines
 
-The Streamlit interface works best with:
-- Chrome (recommended)
-- Firefox
-- Safari
-- Edge
+### Theme Configuration
+```toml
+[theme]
+primaryColor = "#FF4B4B"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#FAFAFA"
+font = "sans serif"
 
-Ensure your browser is up to date for optimal performance.
+[client]
+toolbarMode = "minimal"
+showSidebarNavigation = true
+```
 
-## Support
+### Layout Patterns
 
-For technical issues:
-1. Check the console for error messages
-2. Verify both backend and frontend are running
-3. Ensure all required dependencies are installed
-4. Contact technical support if issues persist
+1. Column-Based Layout:
+```python
+# Metrics display
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("Base Cost", f"€{base_cost:.2f}")
+with col2:
+    st.metric("Variable Cost", f"€{variable_cost:.2f}")
+
+# Form inputs
+col1, col2 = st.columns(2)
+with col1:
+    st.text_input("Origin")
+with col2:
+    st.text_input("Destination")
+```
+
+2. Expandable Sections:
+```python
+with st.expander("Detailed Cost Breakdown"):
+    # Detailed content
+    st.subheader("Base Costs")
+    # Cost components
+
+with st.expander("Advanced Settings"):
+    # Advanced options
+    st.number_input("Multiplier")
+```
+
+### User Feedback
+
+1. Loading States:
+```python
+with st.spinner("🔄 Calculating route..."):
+    response = requests.post(f"{API_URL}/route", json=route_data)
+```
+
+2. Status Messages:
+```python
+# Success messages
+st.success("Settings saved successfully!")
+
+# Warnings
+st.warning("Please fill in all required fields")
+
+# Errors
+st.error(f"Error: {response.json().get('error', 'Unknown error')}")
+
+# Information
+st.info("🎯 Fun Fact: Modern AI-powered logistics...")
+```
+
+### Form Organization
+1. Group related inputs
+2. Use clear labels and help text
+3. Provide immediate validation feedback
+4. Include progress indicators
+
+For detailed UI component patterns and styling guidelines, see [Architecture Documentation](../docs/ARCHITECTURE.md#frontend-layer-streamlit).
+
+## Styling and Configuration
+
+### Streamlit Configuration
+```toml
+# .streamlit/config.toml
+
+[theme]
+primaryColor = "#FF4B4B"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#FAFAFA"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+enableStaticServing = true
+
+[client]
+toolbarMode = "minimal"
+showSidebarNavigation = true
+```
+
+### Page Configuration
+```python
+st.set_page_config(
+    page_title="LoadApp.AI",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+```
+
+### Component Styling
+1. Use consistent spacing and alignment
+2. Follow Streamlit's native component styling
+3. Maintain visual hierarchy in layouts
+4. Apply consistent color scheme from theme
+
+For detailed styling patterns and theme customization, see [Architecture Documentation](../docs/ARCHITECTURE.md#frontend-layer-streamlit).
+
+## Development Workflow
+
+### Environment Setup
+```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Development dependencies
+- streamlit>=1.28.0      # Frontend framework
+- plotly>=5.16.0        # Data visualization
+- folium>=0.14.0        # Map visualization
+- black>=23.7.0         # Code formatting
+- isort>=5.12.0        # Import sorting
+- mypy>=1.5.1          # Type checking
+```
+
+### Starting Development Server
+```bash
+# Start backend first
+./start_backend.sh
+
+# Start frontend in new terminal
+./start_frontend.sh
+```
+
+The frontend startup script:
+1. Checks backend connectivity
+2. Loads environment configuration
+3. Starts Streamlit development server
+
+### Development Features
+1. Hot Reloading:
+   - Automatic page refresh on file changes
+   - State preservation during development
+   - Real-time error feedback
+
+2. Debug Mode:
+   - Enable through environment variables
+   - Detailed error messages
+   - State inspection tools
+
+For detailed development practices and workflow patterns, see [Architecture Documentation](../docs/ARCHITECTURE.md#frontend-layer-streamlit).
+
+## Testing
+
+The frontend testing suite is implemented using pytest and includes comprehensive tests for components, pages, and API integrations. The tests are located in the `tests/` directory.
+
+### Test Structure
+- `test_frontend_components.py`: Tests for individual UI components
+- `test_streamlit_ui.py`: Integration tests for Streamlit UI and API interactions
+- `conftest.py`: Common test fixtures and configurations
+
+### Key Testing Areas
+1. **Component Testing**
+   - Form validation and submission
+   - Component rendering and state management
+   - Error handling and edge cases
+   - Type safety checks
+
+2. **Integration Testing**
+   - API endpoint integration
+   - State management across components
+   - Data flow between components
+   - Error handling for API responses
+
+3. **UI/UX Testing**
+   - Route input form functionality
+   - Route display and map rendering
+   - Cost settings interface
+   - Offer review page functionality
+
+### Running Tests
+```bash
+# Run all tests
+pytest tests/
+
+# Run specific test file
+pytest tests/test_frontend_components.py
+
+# Run tests with coverage report
+pytest --cov=frontend tests/
+```
+
+### Test Fixtures
+Common test fixtures are available in `conftest.py`:
+- `mock_streamlit`: Mocks Streamlit session state and functions
+- `mock_api`: Mocks API responses for testing
+- `mock_requests`: Mocks HTTP requests for API calls
+
+### Best Practices
+1. Use mocking for external dependencies (API calls, Streamlit functions)
+2. Test both success and error scenarios
+3. Maintain type safety in test implementations
+4. Use descriptive test names and documentation
+5. Keep test data separate from test logic
+
+## Best Practices
+
+### Code Organization
+1. Separate components by functionality
+2. Use consistent naming conventions
+3. Keep components focused and reusable
+4. Document component interfaces
+
+### Performance
+1. Lazy loading for heavy components
+2. Efficient state management
+3. Optimized API calls
+4. Proper cache usage
+
+### Error Handling
+1. Validate inputs before submission
+2. Provide clear error messages
+3. Handle network errors gracefully
+4. Maintain user context during errors
+
+### Component Design
+1. Single responsibility principle
+2. Clear prop interfaces
+3. Consistent state management
+4. Proper error propagation
+
+## Deployment
+
+### Environment Configuration
+```python
+# Load environment-specific settings
+API_URL = os.getenv("API_URL", "http://127.0.0.1:5000")
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+```
+
+### Production Considerations
+1. Environment-specific configurations
+2. Error tracking setup
+3. Performance monitoring
+4. Security headers
+
+## Troubleshooting
+
+### Common Issues
+1. API Connection Errors
+   - Check API_URL configuration
+   - Verify network connectivity
+   - Check backend server status
+
+2. State Management Issues
+   - Clear browser cache
+   - Reset session state
+   - Check state initialization
+
+3. Component Rendering Problems
+   - Verify data structure
+   - Check component dependencies
+   - Validate prop types
+
+### Debugging Tips
+1. Enable debug mode:
+```python
+if DEBUG:
+    st.write("Debug info:", st.session_state)
+```
+
+2. Use logging:
+```python
+import logging
+logging.info("Route data:", route_data)
+```
+
+3. Component isolation:
+```python
+# Test component in isolation
+if st.checkbox("Test component"):
+    with st.container():
+        render_test_component()
+```
