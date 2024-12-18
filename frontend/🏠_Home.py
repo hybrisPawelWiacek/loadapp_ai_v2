@@ -16,7 +16,7 @@ from components.route_display import render_route_display, render_route_map
 import pandas as pd
 
 # Constants
-API_URL = "http://127.0.0.1:5000"
+API_URL = "http://127.0.0.1:5001"
 HEADERS = {
     'Content-Type': 'application/json',
     'Accept': 'application/json'
@@ -95,13 +95,14 @@ if page == "🛣️ New Route":
                 headers=HEADERS
             )
             
-            if route_response.status_code == 200:
+            if route_response.status_code in [200, 201]:
                 st.session_state.current_route = route_response.json()
                 st.session_state.current_costs = None  # Reset costs when new route is calculated
                 st.session_state.step = 'route_summary'
                 st.rerun()  # Force a rerun to update the UI
             else:
-                st.error("Failed to calculate route. Please try again.")
+                error_msg = route_response.json().get('error', 'Failed to calculate route. Please try again.')
+                st.error(error_msg)
         
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")

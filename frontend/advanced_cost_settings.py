@@ -3,7 +3,7 @@ import requests
 from typing import Dict, List
 
 # Constants
-API_URL = "http://127.0.0.1:5000"
+API_URL = "http://127.0.0.1:5001"
 HEADERS = {
     'Content-Type': 'application/json',
     'Accept': 'application/json'

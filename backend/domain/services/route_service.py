@@ -1,15 +1,14 @@
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any
-from uuid import UUID
+from datetime import datetime, timezone
+from typing import List, Dict, Optional, Any
+from uuid import UUID, uuid4
 import structlog
 
-from ...domain.entities.route import Route, EmptyDriving, MainRoute, CountrySegment, TimelineEvent
-from ...domain.entities.cost_setting import CostSetting
-from ...domain.entities.location import Location
-from ...domain.entities.cargo import Cargo, TransportType, Capacity
-from ...domain.entities.timeline import TimelineEvent
-from ...domain.exceptions import ValidationError as DomainValidationError, RouteValidationException
-from ...domain.validators.cost_setting_validator import (
+from ..entities.cargo import TransportType, Capacity, Cargo
+from ..entities.route import Route, EmptyDriving, MainRoute, CountrySegment
+from ..entities.location import Location
+from ..entities.timeline import TimelineEvent
+from ..exceptions import ValidationError as DomainValidationError, BusinessRuleError
+from ..validators.cost_setting_validator import (
     CostSettingValidator,
     ValidationError as CostValidationError
 )
@@ -19,13 +18,10 @@ from ...infrastructure.monitoring.metrics_service import MetricsService
 from ...domain.services.cost_calculation_service import CostCalculationService
 
 class TimelineValidationError(DomainValidationError):
-    """Error raised when route timeline validation fails."""
-    def __init__(self, message: str):
-        super().__init__(message=message, field="timeline")
+    """Raised when timeline validation fails."""
+    pass
 
 class RouteService:
-    """Service for managing route operations."""
-
     def __init__(
         self,
         repository,
@@ -51,39 +47,28 @@ class RouteService:
         self.logger = structlog.get_logger(__name__)
 
     def create_route(self, route_data: dict, cost_settings: Optional[List[dict]] = None) -> Route:
-        """Create a new route with the given data and cost settings.
+        """Create a new route from route data.
         
         Args:
             route_data: Dictionary containing route data
-            cost_settings: Optional list of cost settings to use
+            cost_settings: Optional list of cost settings
             
         Returns:
-            Created Route entity
+            Created route
             
         Raises:
-            ValidationError: If route data or cost settings are invalid
-            BusinessRuleError: If business rules are violated
+            ValidationError: If route data is invalid
         """
         try:
             self.logger.info(
                 "creating_route",
                 route_id=route_data.get('id'),
-                route_id_type=type(route_data.get('id')),
+                route_id_type=type(route_data.get('id')).__name__,
                 cost_settings_count=len(cost_settings) if cost_settings else 0,
-                cost_settings_ids=[cs.get('id') for cs in cost_settings] if cost_settings else [],
-                cost_settings_types=[cs.get('type') for cs in cost_settings] if cost_settings else []
+                cost_settings_ids=[s.get('id') for s in cost_settings] if cost_settings else [],
+                cost_settings_types=[s.get('type') for s in cost_settings] if cost_settings else []
             )
-
-            # Validate cost settings if provided
-            if cost_settings:
-                validation_errors = self.validate_route_cost_settings(cost_settings)
-                if validation_errors:
-                    self.logger.error(
-                        "cost_settings_validation_failed",
-                        errors=validation_errors
-                    )
-                    raise ValidationError("Invalid cost settings", validation_errors)
-
+            
             # Convert dictionaries to entity objects
             self.logger.debug("Converting route to dictionary")
             
@@ -94,12 +79,23 @@ class RouteService:
             # Create TransportType object if provided
             transport_type = None
             if route_data.get('transport_type'):
-                transport_type = TransportType(**route_data['transport_type']) if isinstance(route_data['transport_type'], dict) else route_data['transport_type']
+                if isinstance(route_data['transport_type'], dict):
+                    # Create Capacity first if it exists
+                    capacity = Capacity(**route_data['transport_type']['capacity']) if route_data['transport_type'].get('capacity') else None
+                    transport_data = route_data['transport_type'].copy()
+                    if capacity:
+                        transport_data['capacity'] = capacity
+                    transport_type = TransportType(**transport_data)
+                else:
+                    transport_type = route_data['transport_type']
             
             # Create Cargo object if provided
             cargo = None
             if route_data.get('cargo'):
                 cargo = Cargo(**route_data['cargo']) if isinstance(route_data['cargo'], dict) else route_data['cargo']
+                # Create transport type from cargo if not provided
+                if not transport_type and cargo:
+                    transport_type = TransportType.from_cargo(cargo)
             
             # Create EmptyDriving object
             empty_driving = EmptyDriving(**route_data['empty_driving']) if isinstance(route_data['empty_driving'], dict) else route_data['empty_driving']
@@ -117,7 +113,7 @@ class RouteService:
                     timeline_events.append(TimelineEvent(**event_data))
                 else:
                     timeline_events.append(event_data)
-
+            
             # Create Route object
             route = Route(
                 origin=origin,
@@ -298,7 +294,7 @@ class RouteService:
                     'destination': destination.__dict__,
                     'pickup_time': pickup_time,
                     'delivery_time': delivery_time,
-                    'transport_type': transport_type.to_dict(),
+                    'transport_type': transport_type.to_dict() if transport_type else None,
                     'cargo': cargo.to_dict() if cargo else None,
                     'empty_driving': empty_driving.__dict__,
                     'main_route': main_route.__dict__,

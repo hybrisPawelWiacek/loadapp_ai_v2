@@ -8,7 +8,7 @@ from .base_repository import BaseRepository
 from ..models.route import RouteModel
 from ....domain.entities.route import Route, EmptyDriving, MainRoute, CountrySegment
 from ....domain.entities.location import Location
-from ....domain.entities.cargo import Cargo, TransportType
+from ....domain.entities.cargo import Cargo, TransportType, Capacity
 from ....domain.entities.timeline import TimelineEvent
 
 class RouteRepository(BaseRepository):
@@ -74,10 +74,15 @@ class RouteRepository(BaseRepository):
         transport_type_data = model.transport_type
         transport_type = None
         if transport_type_data:
+            # Create Capacity first if it exists
+            capacity = None
+            if transport_type_data.get('capacity'):
+                capacity = Capacity(**transport_type_data['capacity'])
+            
             transport_type = TransportType(
-                type=transport_type_data.get('type'),
-                capacity=transport_type_data.get('capacity'),
-                features=transport_type_data.get('features', [])
+                name=transport_type_data.get('name') or transport_type_data.get('type', ''),
+                capacity=capacity,
+                restrictions=transport_type_data.get('restrictions', [])
             )
 
         # Convert timeline events

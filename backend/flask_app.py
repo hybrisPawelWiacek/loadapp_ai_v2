@@ -24,6 +24,7 @@ from backend.infrastructure.database.repositories.base_repository import BaseRep
 from backend.infrastructure.database.repositories.versionable_repository import VersionableRepository
 from backend.infrastructure.database.repositories.offer_repository import OfferRepository
 from backend.infrastructure.database.models.offer import OfferModel
+from backend.infrastructure.database.repositories.route_repository import RouteRepository
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -65,6 +66,9 @@ def create_app():
         }
     })
     
+    # Add this line after CORS configuration to handle SQLite concurrency
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'connect_args': {'check_same_thread': False}}
+    
     # Optional: Global after_request handler for additional CORS headers
     @app.after_request
     def after_request(response):
@@ -86,15 +90,6 @@ def create_app():
         logger.error("Failed to initialize database", error=str(e))
         raise
         
-    # Then run migrations
-    try:
-        from .infrastructure.database.migrations.initial_migration import run_migrations
-        run_migrations()
-        logger.info("Database migrations completed successfully")
-    except Exception as e:
-        logger.error("Failed to run database migrations", error=str(e))
-        raise
-    
     # Initialize database session
     session = SessionLocal()
     logger.info("database_session_created", session_type=type(session).__name__)
@@ -125,10 +120,12 @@ def create_app():
     # Create a repository for offers
     db_session = SessionLocal()
     offer_repository = OfferRepository(db_session)
+    route_repository = RouteRepository(db_session)
 
     offer_service = OfferService(
         db_repository=offer_repository,
         cost_service=cost_service,
+        route_repository=route_repository,
         ai_service=ai_service
     )
     logger.info("offer_service_created")
@@ -153,8 +150,7 @@ def create_app():
         cost_optimization_service=cost_optimization_service
     )
     offer_endpoint = OfferEndpoint(
-        offer_service=offer_service,
-        metrics_service=metrics_service
+        offer_service=offer_service
     )
 
     # Register API endpoints
@@ -196,8 +192,7 @@ def create_app():
         '/offers',
         '/offers/<string:offer_id>',
         resource_class_kwargs={
-            'offer_service': offer_service,
-            'metrics_service': metrics_service
+            'offer_service': offer_service
         }
     )
 
@@ -271,20 +266,19 @@ def create_app():
 
     @app.errorhandler(Exception)
     def handle_error(error):
-        """Handle any uncaught exceptions."""
+        """Handle any uncaught exceptions with detailed logging."""
         logger.error(
-            "unhandled_error", 
-            error=str(error), 
-            type=type(error).__name__,
-            path=request.path,
-            method=request.method,
-            endpoint=request.endpoint,
-            url_rule=str(request.url_rule) if request.url_rule else None
+            "unhandled_error",
+            error=str(error),
+            error_type=type(error).__name__,
+            error_details=getattr(error, 'errors', None),
+            traceback=True
         )
-        return jsonify({
-            "error": str(error),
+        return {
+            "error": "Failed to calculate route. Please try again.",
+            "details": str(error),
             "type": type(error).__name__
-        }), 500
+        }, 500
 
     logger.info(
         "flask_app_created",
@@ -315,7 +309,7 @@ if __name__ == "__main__":
     background_thread.start()
     
     try:
-        app.run(debug=True)
+        app.run(debug=True, port=5001)
     finally:
         # Cleanup
         background_loop.call_soon_threadsafe(background_loop.stop)

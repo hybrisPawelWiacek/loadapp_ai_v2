@@ -28,6 +28,31 @@ class TransportType:
         # Ensure id is a UUID object
         if isinstance(self.id, str):
             self.id = UUID(self.id)
+        # Handle 'type' field if present
+        if hasattr(self, 'type'):
+            self.name = getattr(self, 'type')
+            delattr(self, 'type')
+        # Convert capacity if it's a dict
+        if isinstance(self.capacity, dict):
+            self.capacity = Capacity(**self.capacity)
+    
+    @classmethod
+    def from_cargo(cls, cargo: 'Cargo') -> 'TransportType':
+        """Create a TransportType instance from a Cargo object."""
+        capacities = {
+            "Standard Truck": Capacity(max_weight=24000, max_volume=80),
+            "Small Truck": Capacity(max_weight=7500, max_volume=40),
+            "Van": Capacity(max_weight=3500, max_volume=20),
+        }
+        
+        transport_type = cargo.type if isinstance(cargo.type, str) else "Standard Truck"
+        capacity = capacities.get(transport_type, Capacity(max_weight=24000, max_volume=80))
+        
+        return cls(
+            name=transport_type,
+            capacity=capacity,
+            restrictions=[]
+        )
     
     def to_dict(self) -> dict:
         """Convert transport type to dictionary for JSON serialization."""
